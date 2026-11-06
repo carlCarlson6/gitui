@@ -28,7 +28,7 @@ The current directory (or the given path) must be inside a git working tree.
 - **Branches** — local branches, current branch marked with `*`. Highlighting a branch previews its last 100 commits without checking it out. `Enter` checks it out.
 - **Changes** — staged, unstaged, untracked and conflicted files. File-level stage/unstage, stage all, unstage all.
 - **Preview** — diff for the selected file, or a commit's metadata, stat and patch. Commit history follows the highlighted branch.
-- **Commit** — multi-line message modal, `Ctrl+S` to commit. `A` amends the last commit and prefills its message.
+- **Commit** — multi-line message modal, `Ctrl+S` to commit. `A` amends the last commit and prefills its message. Commits always apply to the checked-out branch; previewing a different branch blocks committing until you check it out.
 - **Fetch / pull / push** — `fetch --all --prune`, `pull` with your git config, and `push` with automatic upstream setup.
 - **Conflicts** — detected and surfaced. The app blocks commit, checkout, pull and push while the index has unmerged entries. Resolve files in your editor and stage them individually here to mark them resolved.
 - **Multi-step operations** — merge, rebase, cherry-pick and revert are detected. A merge can be finished by committing from the app; rebase/cherry-pick/revert must be finished with `git <operation> --continue`.

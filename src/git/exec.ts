@@ -47,6 +47,7 @@ function gitEnv(extra?: Record<string, string>): Record<string, string> {
     GIT_PAGER: "cat",
     GIT_MERGE_AUTOEDIT: "no",
     GIT_OPTIONAL_LOCKS: "0",
+    GCM_INTERACTIVE: "never",
     PAGER: "cat",
     LC_ALL: "C",
     LANG: "C",

@@ -92,6 +92,7 @@ Scroll the preview
 
 Notes
   • Commit history follows the branch highlighted in Branches. Enter checks it out.
+  • Commits always apply to the checked-out branch; previewing another branch blocks commits until you check it out.
   • Pull honors your git config. Conflicts are detected, not resolved in-app.
   • Resolve conflicted files in your editor, then stage them here one by one.
   • If a rebase is in progress, finish it with git rebase --continue.
@@ -165,6 +166,7 @@ export function App({ startPath }: Props) {
   const [commitError, setCommitError] = useState<string | null>(null)
 
   const historyBranchRef = useRef<string | null>(null)
+  const currentBranchRef = useRef<string | null>(null)
   const refreshSeq = useRef(0)
   const commitsSeq = useRef(0)
   const previewSeq = useRef(0)
@@ -198,18 +200,13 @@ export function App({ startPath }: Props) {
   const modalHeight = Math.max(9, Math.min(height - 4, Math.floor(height * 0.8)))
   const commitWidth = Math.max(40, Math.min(width - 8, 78))
   const commitHeight = Math.max(14, Math.min(height - 4, 20))
-  const errorModalHeight = Math.max(
-    9,
-    Math.min(
-      modalHeight,
-      (modal.type === "error"
-        ? modal.body
-        : modal.type === "conflicts"
-          ? conflictsBody(modal.paths, operation)
-          : ""
-      ).split("\n").length + 6,
-    ),
-  )
+  const textModalBody =
+    modal.type === "error"
+      ? modal.body
+      : modal.type === "conflicts"
+        ? conflictsBody(modal.paths, operation)
+        : ""
+  const errorModalHeight = Math.max(9, Math.min(modalHeight, textModalBody.split("\n").length + 6))
 
   const showError = useCallback((error: unknown) => {
     setModal({ type: "error", ...failureInfo(error) })
@@ -241,9 +238,12 @@ export function App({ startPath }: Props) {
 
         const names = new Set(nextBranches.map((branch) => branch.name))
         const previous = historyBranchRef.current
+        const followsCurrent = previous !== null && previous === currentBranchRef.current
         let nextHistory: string | null
 
-        if (opts.desiredBranch !== undefined) {
+        if (nextOperation) {
+          nextHistory = nextStatus.head && names.has(nextStatus.head) ? nextStatus.head : null
+        } else if (opts.desiredBranch !== undefined) {
           if (opts.desiredBranch !== null && names.has(opts.desiredBranch)) {
             nextHistory = opts.desiredBranch
           } else if (nextStatus.head && names.has(nextStatus.head)) {
@@ -251,6 +251,8 @@ export function App({ startPath }: Props) {
           } else {
             nextHistory = null
           }
+        } else if (followsCurrent) {
+          nextHistory = nextStatus.head && names.has(nextStatus.head) ? nextStatus.head : null
         } else if (previous && names.has(previous)) {
           nextHistory = previous
         } else if (nextStatus.head && names.has(nextStatus.head)) {
@@ -259,8 +261,8 @@ export function App({ startPath }: Props) {
           nextHistory = null
         }
 
-        historyBranchRef.current = nextHistory
-        setHistoryBranchState(nextHistory)
+        currentBranchRef.current = nextStatus.head
+        selectHistoryBranch(nextHistory)
         setDataVersion((version) => version + 1)
 
         return { status: nextStatus, branches: nextBranches, historyBranch: nextHistory, operation: nextOperation }
@@ -268,7 +270,7 @@ export function App({ startPath }: Props) {
         if (seq === refreshSeq.current) setRefreshing(false)
       }
     },
-    [root],
+    [root, selectHistoryBranch],
   )
 
   // Discover the repository once, from the launch path.
@@ -696,7 +698,7 @@ export function App({ startPath }: Props) {
       const result = await pushRepo(root)
       await refreshRepo()
       if (result.code !== 0) throw new GitError(result)
-      setMessage(firstLine(result.stderr) || firstLine(result.stdout) || "Pushed")
+      setMessage("Pushed")
     })
   }
 
@@ -713,6 +715,14 @@ export function App({ startPath }: Props) {
     }
     if (amend && operation) {
       setMessage(`Cannot amend while a ${operation} is in progress.`)
+      return
+    }
+    if (!currentBranch) {
+      setMessage("Detached HEAD — check out a branch before committing.")
+      return
+    }
+    if (historyBranch && historyBranch !== currentBranch) {
+      setMessage(`Check out ${historyBranch} to commit.`)
       return
     }
     if (amend && (!status || status.unborn || !status.oid)) {
@@ -997,6 +1007,7 @@ export function App({ startPath }: Props) {
 
   if (phase === "error") {
     const body = startupError?.body ?? "Unknown error"
+    const errorHeight = Math.min(Math.max(10, body.split("\n").length + 8), Math.max(10, height - 4))
     return (
       <box width="100%" height="100%" backgroundColor={theme.bg} alignItems="center" justifyContent="center">
         <box
@@ -1007,7 +1018,7 @@ export function App({ startPath }: Props) {
           title={startupError?.title ?? "Cannot open repository"}
           titleColor={theme.red}
           width={Math.min(Math.max(46, width - 8), 100)}
-          height={Math.min(Math.max(12, height - 6), 24)}
+          height={errorHeight}
           padding={1}
           flexDirection="column"
         >

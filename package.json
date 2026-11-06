@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "A small OpenTUI git client",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "scripts": {
     "dev": "bun run src/index.tsx",
     "start": "bun run src/index.tsx",

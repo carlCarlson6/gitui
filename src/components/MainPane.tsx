@@ -92,8 +92,8 @@ export function MainPane({ title, preview, data, loading, focused, scrollRef }: 
               <text fg={theme.text} wrapMode="word">
                 {data.data.shortHash} · {data.data.author}
               </text>
-              <text fg={theme.muted} wrapMode="word">
-                &lt;{data.data.email}&gt; · {data.data.date}
+              <text fg={theme.muted} wrapMode="none">
+                {data.data.date}
               </text>
               {data.data.merge ? (
                 <text fg={theme.yellow}>Merge commit — showing the diff against its first parent.</text>
