@@ -5,6 +5,7 @@ import { BranchPanel } from "./components/BranchPanel"
 import { ChangesPanel } from "./components/ChangesPanel"
 import { CommitModal } from "./components/CommitModal"
 import { CommitsPanel } from "./components/CommitsPanel"
+import { CreateBranchModal } from "./components/CreateBranchModal"
 import { Footer } from "./components/Footer"
 import { Header } from "./components/Header"
 import { MainPane, type MainContent } from "./components/MainPane"
@@ -13,6 +14,7 @@ import { RepoPicker } from "./components/RepoPicker"
 import {
   checkoutBranch,
   commitChanges,
+  createBranch,
   deleteLocalBranch,
   deleteRemoteBranch,
   discardUnstagedChanges,
@@ -64,6 +66,7 @@ type ModalState =
   | { type: "error"; title: string; body: string }
   | { type: "conflicts"; paths: string[] }
   | { type: "discard"; rows: FileRow[] }
+  | { type: "create-branch"; base: string }
   | { type: "delete-branch"; branch: Branch; remote: string; remoteBranch: string }
 
 type Props = {
@@ -88,6 +91,7 @@ Panels
 Branches
   j/k or ↑/↓          select a branch
   Enter               checkout the highlighted branch
+  a                   create a branch from the highlighted one and check it out
   d                   delete the local branch
   D                   delete the local branch and its upstream remote
 
@@ -124,8 +128,9 @@ Notes
   • Network commands use your existing SSH agent / credential helper and never prompt inside the TUI.
   • In Changes, d/D discard worktree changes after confirmation; untracked files are deleted and staged changes are kept.
   • In Branches, d deletes the local branch; D also deletes its upstream remote branch after confirmation.
+  • In Branches, a creates a new branch from the highlighted branch and checks it out.
   • Local branches are deleted with git branch -d, so unmerged branches are refused.
-  • No reset, force-push or branch creation in this version.`
+  • No reset or force-push in this version.`
 
 function failureInfo(error: unknown): ErrorInfo {
   return { title: errorTitle(error), body: errorToText(error) }
@@ -243,6 +248,7 @@ export function App({ startPath }: Props) {
   const [message, setMessage] = useState("")
   const [modal, setModal] = useState<ModalState>({ type: "none" })
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [branchError, setBranchError] = useState<string | null>(null)
 
   const historyBranchRef = useRef<string | null>(null)
   const currentBranchRef = useRef<string | null>(null)
@@ -284,6 +290,8 @@ export function App({ startPath }: Props) {
   const modalHeight = Math.max(9, Math.min(height - 4, Math.floor(height * 0.8)))
   const commitWidth = Math.max(40, Math.min(width - 8, 78))
   const commitHeight = Math.max(14, Math.min(height - 4, 20))
+  const branchWidth = Math.max(44, Math.min(width - 8, 72))
+  const branchHeight = Math.max(12, Math.min(height - 4, 15))
   const textModalBody =
     modal.type === "error"
       ? modal.body
@@ -816,6 +824,7 @@ export function App({ startPath }: Props) {
     setMessage("")
     setModal({ type: "none" })
     setCommitError(null)
+    setBranchError(null)
     setStartupError(null)
   }
 
@@ -976,6 +985,52 @@ export function App({ startPath }: Props) {
       await refreshRepo({ desiredBranch: branch.name })
       setMessage(`Checked out ${branch.name}`)
     })
+  }
+
+  const openCreateBranch = () => {
+    if (!root) return
+    const branch = branches.find((item) => item.name === historyBranchRef.current)
+    if (!branch) {
+      setMessage("No branch selected")
+      return
+    }
+    if (!ensureNoConflicts()) return
+    if (!ensureNoOperation()) return
+
+    setBranchError(null)
+    setModal({ type: "create-branch", base: branch.name })
+  }
+
+  const submitCreateBranch = async (name: string) => {
+    if (!root || modal.type !== "create-branch" || busyRef.current) return
+    const base = modal.base
+    // An unborn branch has no ref yet; switch -c creates it from the current HEAD.
+    const startPoint = status?.unborn && base === status.head ? null : base
+    busyRef.current = true
+    setBusy("Creating branch")
+    setBranchError(null)
+    setMessage("")
+
+    try {
+      await createBranch(root, name, startPoint)
+    } catch (error) {
+      setBranchError(errorToText(error))
+      return
+    } finally {
+      busyRef.current = false
+      setBusy(null)
+    }
+
+    setModal({ type: "none" })
+    setBranchError(null)
+    setMessage(startPoint ? `Created and checked out ${name} from ${base}` : `Created and checked out ${name}`)
+    resetCommitRef.current = true
+    selectHistoryBranch(name)
+    try {
+      await refreshRepo({ desiredBranch: name })
+    } catch (error) {
+      showError(error)
+    }
   }
 
   const runBranchDelete = (
@@ -1245,6 +1300,7 @@ export function App({ startPath }: Props) {
 
     if (modal.type !== "none") {
       if (modal.type === "commit") return
+      if (modal.type === "create-branch") return
       if (modal.type === "discard") {
         if (key.name === "y" || key.name === "return" || key.name === "enter") {
           key.preventDefault()
@@ -1383,6 +1439,9 @@ export function App({ startPath }: Props) {
       } else if (key.name === "d") {
         key.preventDefault()
         deleteSelectedBranch(key.shift)
+      } else if (key.name === "a") {
+        key.preventDefault()
+        openCreateBranch()
       } else if (key.name === "return") {
         key.preventDefault()
         checkoutSelected()
@@ -1638,6 +1697,21 @@ export function App({ startPath }: Props) {
           onCancel={() => {
             setModal({ type: "none" })
             setCommitError(null)
+          }}
+        />
+      ) : null}
+
+      {modal.type === "create-branch" ? (
+        <CreateBranchModal
+          base={modal.base}
+          width={branchWidth}
+          height={branchHeight}
+          busy={busy !== null}
+          actionError={branchError}
+          onSubmit={(name) => void submitCreateBranch(name)}
+          onCancel={() => {
+            setModal({ type: "none" })
+            setBranchError(null)
           }}
         />
       ) : null}

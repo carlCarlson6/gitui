@@ -87,6 +87,16 @@ export async function checkoutBranch(root: string, branch: string) {
   await runGitOrThrow(["switch", branch], root, { timeoutMs: 60_000 })
 }
 
+/**
+ * Create a branch at `base` and check it out. Pass a null base to branch from
+ * the current (possibly unborn) HEAD.
+ */
+export async function createBranch(root: string, branch: string, base: string | null) {
+  const args = ["switch", "-c", branch]
+  if (base) args.push(base)
+  await runGitOrThrow(args, root, { timeoutMs: 60_000 })
+}
+
 export async function deleteLocalBranch(root: string, branch: string) {
   await runGitOrThrow(["branch", "-d", branch], root, { timeoutMs: LOCAL_TIMEOUT })
 }

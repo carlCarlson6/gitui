@@ -4,7 +4,7 @@ import { truncateRight } from "../lib/format"
 
 const HINTS: Record<Panel, string> = {
   branches:
-    "j/k select · enter checkout · d delete · D delete+remote · right: branch graph · tab next · c commit · esc repos · ? help · q quit",
+    "j/k select · enter checkout · a create · d delete · D delete+remote · right: branch graph · tab next · c commit · esc repos · ? help · q quit",
   changes:
     "space stage/unstage · u stage file · A stage all · U unstage all · d/D undo · right: file diff · tab next · c commit · esc repos · ? help",
   commits:

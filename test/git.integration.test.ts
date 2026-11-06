@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   commitChanges,
+  createBranch,
   deleteLocalBranch,
   deleteRemoteBranch,
   discardUnstagedChanges,
@@ -226,6 +227,36 @@ describe("git integration", () => {
     expect(byPath.get("src")?.prefix).toBe("├─ ")
     expect(byPath.get("README.md")?.prefix).toBe("└─ ")
     expect(byPath.get("src/components/App.tsx")?.prefix).toBe("│  │  └─ ")
+  })
+
+  test("creates and checks out a branch from a selected base branch", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "base.txt"), "base\n")
+    await commitAll(root, "initial")
+
+    await runGitOrThrow(["switch", "-c", "feature"], root)
+    writeFileSync(join(root, "feature.txt"), "feature\n")
+    await commitAll(root, "feature work")
+    const featureHash = (await runGitOrThrow(["rev-parse", "HEAD"], root)).stdout.trim()
+    await runGitOrThrow(["switch", "main"], root)
+
+    await createBranch(root, "topic", "feature")
+
+    const status = await readStatus(root)
+    expect(status.head).toBe("topic")
+    expect((await runGitOrThrow(["rev-parse", "HEAD"], root)).stdout.trim()).toBe(featureHash)
+    const branches = await readBranches(root, status)
+    expect(branches.find((branch) => branch.name === "topic")?.current).toBe(true)
+  })
+
+  test("creates a branch on an unborn repository", async () => {
+    const root = await makeRepo()
+
+    await createBranch(root, "topic", null)
+
+    const status = await readStatus(root)
+    expect(status.head).toBe("topic")
+    expect(status.unborn).toBe(true)
   })
 
   test("deletes a local branch and its upstream remote branch", async () => {

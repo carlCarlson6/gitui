@@ -33,7 +33,7 @@ In direct mode, the path must be inside a git working tree.
 
 ## What it does
 
-- **Branches** — local branches, current branch marked with `*`. Branches is selected when a repository opens. Selecting a branch previews its last 100 commits without checking it out. While Branches is focused, the right pane shows a graph of all local and remote branches. `Enter` checks the selected branch out. `d` deletes the local branch; `D` deletes it together with its upstream remote branch after a confirmation prompt.
+- **Branches** — local branches, current branch marked with `*`. Branches is selected when a repository opens. Selecting a branch previews its last 100 commits without checking it out. While Branches is focused, the right pane shows a graph of all local and remote branches. `Enter` checks the selected branch out. `a` creates a new branch from the selected branch and checks it out. `d` deletes the local branch; `D` deletes it together with its upstream remote branch after a confirmation prompt.
 - **Changes** — staged, unstaged, untracked and conflicted files. File-level stage/unstage, stage all, unstage all, and undo the selected unstaged change or all unstaged changes. Undo restores tracked files from the index (staged changes are kept) and deletes selected untracked files after a confirmation prompt. While Changes is focused, the right pane shows the selected file's diff.
 - **Commits** — the selected branch's last 100 commits. While Commits is focused, the right pane shows the selected commit's metadata, stat and full diff across every changed file.
 - **Commit** — multi-line message modal, `Ctrl+S` to commit. `Ctrl+A` amends the last commit and prefills its message. Commits always apply to the checked-out branch; previewing a different branch blocks committing until you check it out.
@@ -50,6 +50,7 @@ In direct mode, the path must be inside a git working tree.
 | `j` / `k`, arrows | move selection / scroll |
 | `g` / `G` | top / bottom |
 | `Enter` | checkout branch / focus right pane |
+| `a` | Branches: create a branch from the selected branch and check it out |
 | `space` | stage or unstage selected file |
 | `u` | stage the selected unstaged file |
 | `A` | stage all changes |
@@ -73,7 +74,7 @@ Repository picker: `j`/`k` move, `g`/`G` top/bottom, `Enter` open, `r` rescan, `
 - No hunk or line staging or discarding
 - No in-app conflict resolver; no editor launching
 - No stash, rebase UI, cherry-pick, revert, reset, or force push
-- No remote-branch list, branch creation, or worktree switching inside a repo
+- No remote-branch list or worktree switching inside a repo
 - Branch deletion uses `git branch -d`, so unmerged branches are refused
 - History is capped at the last 100 commits per branch
 - No filesystem watcher; refresh after actions with `r`
