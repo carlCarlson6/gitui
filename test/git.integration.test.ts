@@ -4,6 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   commitChanges,
+  deleteLocalBranch,
+  deleteRemoteBranch,
   discardUnstagedChanges,
   stageAll,
   stagePaths,
@@ -160,6 +162,57 @@ describe("git integration", () => {
     expect(detail.subject).toBe("feature work")
     expect(detail.patch).toContain("feature.txt")
     expect(detail.merge).toBe(false)
+  })
+
+  test("deletes a local branch and its upstream remote branch", async () => {
+    const root = await makeRepo()
+    const remote = mkdtempSync(join(tmpdir(), "gitui-remote-"))
+    repos.push(remote)
+    await runGitOrThrow(["init", "--bare", "-b", "main"], remote)
+    await runGitOrThrow(["remote", "add", "origin", remote], root)
+
+    writeFileSync(join(root, "base.txt"), "base\n")
+    await commitAll(root, "initial")
+    await runGitOrThrow(["push", "-u", "origin", "main"], root)
+
+    await runGitOrThrow(["switch", "-c", "feature"], root)
+    await runGitOrThrow(["push", "-u", "origin", "feature"], root)
+    await runGitOrThrow(["switch", "main"], root)
+
+    const feature = (await readBranches(root, await readStatus(root))).find(
+      (branch) => branch.name === "feature",
+    )
+    expect(feature?.upstream).toBe("origin/feature")
+    expect(feature?.upstreamRemote).toBe("origin")
+    expect(feature?.upstreamBranch).toBe("feature")
+
+    await deleteRemoteBranch(root, "origin", "feature")
+    const remoteBranches = (
+      await runGitOrThrow(["for-each-ref", "--format=%(refname:short)", "refs/heads"], remote)
+    ).stdout
+      .split("\n")
+      .filter(Boolean)
+    expect(remoteBranches).toEqual(["main"])
+
+    await deleteLocalBranch(root, "feature")
+    const remaining = await readBranches(root, await readStatus(root))
+    expect(remaining.some((branch) => branch.name === "feature")).toBe(false)
+  })
+
+  test("refuses to delete an unmerged local branch", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "base.txt"), "base\n")
+    await commitAll(root, "initial")
+
+    await runGitOrThrow(["switch", "-c", "feature"], root)
+    writeFileSync(join(root, "feature.txt"), "feature\n")
+    await commitAll(root, "feature work")
+    await runGitOrThrow(["switch", "main"], root)
+
+    await expect(deleteLocalBranch(root, "feature")).rejects.toThrow()
+    expect(
+      (await runGit(["rev-parse", "--verify", "-q", "refs/heads/feature"], root)).code,
+    ).toBe(0)
   })
 
   test("supports the initial commit on an unborn branch", async () => {

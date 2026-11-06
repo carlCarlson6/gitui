@@ -4,6 +4,8 @@ export type Branch = {
   name: string
   current: boolean
   upstream?: string
+  upstreamRemote?: string
+  upstreamBranch?: string
 }
 
 export type StatusEntry = {

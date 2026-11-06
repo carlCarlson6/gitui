@@ -87,6 +87,14 @@ export async function checkoutBranch(root: string, branch: string) {
   await runGitOrThrow(["switch", branch], root, { timeoutMs: 60_000 })
 }
 
+export async function deleteLocalBranch(root: string, branch: string) {
+  await runGitOrThrow(["branch", "-d", branch], root, { timeoutMs: LOCAL_TIMEOUT })
+}
+
+export async function deleteRemoteBranch(root: string, remote: string, branch: string) {
+  await runGitOrThrow(["push", remote, "--delete", branch], root, { timeoutMs: NETWORK_TIMEOUT })
+}
+
 export async function fetchAll(root: string) {
   await runGitOrThrow(["fetch", "--all", "--prune"], root, { timeoutMs: NETWORK_TIMEOUT })
 }

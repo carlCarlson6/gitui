@@ -13,6 +13,8 @@ import { RepoPicker } from "./components/RepoPicker"
 import {
   checkoutBranch,
   commitChanges,
+  deleteLocalBranch,
+  deleteRemoteBranch,
   discardUnstagedChanges,
   fetchAll,
   pullRepo,
@@ -60,6 +62,7 @@ type ModalState =
   | { type: "error"; title: string; body: string }
   | { type: "conflicts"; paths: string[] }
   | { type: "discard"; rows: FileRow[] }
+  | { type: "delete-branch"; branch: Branch; remote: string; remoteBranch: string }
 
 type Props = {
   startPath: string | null
@@ -79,6 +82,12 @@ Panels
   q                   quit
   ?                   show this help
   Esc                 close modal / toggle repositories
+
+Branches
+  j/k or ↑/↓          preview a branch
+  Enter               checkout the highlighted branch
+  d                   delete the local branch
+  D                   delete the local branch and its upstream remote
 
 Changes
   space               stage or unstage the selected file
@@ -106,8 +115,10 @@ Notes
   • Resolve conflicted files in your editor, then stage them here one by one.
   • If a rebase is in progress, finish it with git rebase --continue.
   • Network commands use your existing SSH agent / credential helper and never prompt inside the TUI.
-  • d/D discard worktree changes after confirmation; untracked files are deleted and staged changes are kept.
-  • No reset, force-push or branch deletion in this version.`
+  • In Changes, d/D discard worktree changes after confirmation; untracked files are deleted and staged changes are kept.
+  • In Branches, d deletes the local branch; D also deletes its upstream remote branch after confirmation.
+  • Local branches are deleted with git branch -d, so unmerged branches are refused.
+  • No reset, force-push or branch creation in this version.`
 
 function failureInfo(error: unknown): ErrorInfo {
   return { title: errorTitle(error), body: errorToText(error) }
@@ -167,6 +178,20 @@ function discardBody(rows: FileRow[]): string {
 
   lines.push("", "This cannot be undone.")
   return lines.join("\n")
+}
+
+function deleteBranchBody(branch: Branch, remote: string, remoteBranch: string): string {
+  return [
+    `Delete "${branch.name}" locally and from ${remote}?`,
+    "",
+    `  local branch   ${branch.name}`,
+    `  remote branch  ${remote}/${remoteBranch}`,
+    "",
+    "The local branch is deleted first. Git refuses to delete it if it is not fully merged.",
+    `The remote branch is then deleted from ${remote}.`,
+    "",
+    "This cannot be undone.",
+  ].join("\n")
 }
 
 export function App({ startPath }: Props) {
@@ -249,7 +274,9 @@ export function App({ startPath }: Props) {
         ? conflictsBody(modal.paths, operation)
         : modal.type === "discard"
           ? discardBody(modal.rows)
-          : ""
+          : modal.type === "delete-branch"
+            ? deleteBranchBody(modal.branch, modal.remote, modal.remoteBranch)
+            : ""
   const textModalHeight = Math.max(9, Math.min(modalHeight, textModalBody.split("\n").length + 6))
 
   const showError = useCallback((error: unknown) => {
@@ -873,6 +900,69 @@ export function App({ startPath }: Props) {
     })
   }
 
+  const runBranchDelete = (
+    branch: Branch,
+    upstream: { remote: string; branch: string } | null,
+    alsoRemote: boolean,
+  ) => {
+    if (!root) return
+    const target = upstream ? `${branch.name} and ${upstream.remote}/${upstream.branch}` : branch.name
+
+    void perform(`Deleting ${target}`, async () => {
+      await deleteLocalBranch(root, branch.name)
+      if (upstream) {
+        try {
+          await deleteRemoteBranch(root, upstream.remote, upstream.branch)
+        } catch (error) {
+          await refreshRepo()
+          throw new UserError(
+            `Local branch ${branch.name} was deleted, but ${upstream.remote}/${upstream.branch} could not be deleted.\n\n${errorToText(error)}`,
+          )
+        }
+      }
+      await refreshRepo()
+      if (upstream) {
+        setMessage(`Deleted ${branch.name} and ${upstream.remote}/${upstream.branch}`)
+      } else if (alsoRemote) {
+        setMessage(`Deleted ${branch.name}; it had no upstream remote branch`)
+      } else {
+        setMessage(`Deleted ${branch.name}`)
+      }
+    })
+  }
+
+  const confirmDeleteBranch = () => {
+    if (modal.type !== "delete-branch") return
+    const { branch, remote, remoteBranch } = modal
+    setModal({ type: "none" })
+    runBranchDelete(branch, { remote, branch: remoteBranch }, true)
+  }
+
+  const deleteSelectedBranch = (alsoRemote: boolean) => {
+    if (!root) return
+    const branch = branches.find((item) => item.name === historyBranchRef.current)
+    if (!branch) {
+      setMessage("No branch selected")
+      return
+    }
+    if (branch.current) {
+      setMessage(`Cannot delete ${branch.name}: it is checked out`)
+      return
+    }
+
+    if (alsoRemote && branch.upstreamRemote && branch.upstreamBranch) {
+      setModal({
+        type: "delete-branch",
+        branch,
+        remote: branch.upstreamRemote,
+        remoteBranch: branch.upstreamBranch,
+      })
+      return
+    }
+
+    runBranchDelete(branch, null, alsoRemote)
+  }
+
   const doFetch = () => {
     if (!root) return
     void perform("Fetching", async () => {
@@ -1089,6 +1179,18 @@ export function App({ startPath }: Props) {
           return
         }
       }
+      if (modal.type === "delete-branch") {
+        if (key.name === "y" || key.name === "return" || key.name === "enter") {
+          key.preventDefault()
+          confirmDeleteBranch()
+          return
+        }
+        if (key.name === "n") {
+          key.preventDefault()
+          setModal({ type: "none" })
+          return
+        }
+      }
       if (key.name === "escape" || key.name === "?" || key.name === "q") {
         key.preventDefault()
         setModal({ type: "none" })
@@ -1200,6 +1302,9 @@ export function App({ startPath }: Props) {
       } else if (key.name === "g") {
         key.preventDefault()
         jumpBranch(key.shift)
+      } else if (key.name === "d") {
+        key.preventDefault()
+        deleteSelectedBranch(key.shift)
       } else if (key.name === "return") {
         key.preventDefault()
         checkoutSelected()
@@ -1486,6 +1591,18 @@ export function App({ startPath }: Props) {
           height={textModalHeight}
           scrollRef={modalScrollRef}
           footer="y / enter undo · n / esc cancel"
+          color={theme.text}
+        />
+      ) : null}
+
+      {modal.type === "delete-branch" ? (
+        <TextModal
+          title="Delete branch and remote"
+          body={deleteBranchBody(modal.branch, modal.remote, modal.remoteBranch)}
+          width={modalWidth}
+          height={textModalHeight}
+          scrollRef={modalScrollRef}
+          footer="y / enter delete · n / esc cancel"
           color={theme.text}
         />
       ) : null}

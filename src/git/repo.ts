@@ -66,19 +66,28 @@ function ensureCurrentBranch(branches: Branch[], status: StatusSnapshot): Branch
 
 export async function readBranches(root: string, status: StatusSnapshot): Promise<Branch[]> {
   const result = await runGitOrThrow(
-    ["for-each-ref", "--format=%(refname:short)%09%(upstream:short)", "refs/heads"],
+    [
+      "for-each-ref",
+      "--format=%(refname:short)%09%(upstream:short)%09%(upstream:remotename)%09%(upstream:remoteref)",
+      "refs/heads",
+    ],
     root,
   )
 
   const branches: Branch[] = []
   for (const line of result.stdout.split("\n")) {
     if (!line.trim()) continue
-    const [name, upstream] = line.split("\t")
+    const [name, upstream, upstreamRemote, upstreamRef] = line.split("\t")
     if (!name) continue
+    const remoteRef = upstreamRef?.trim()
     branches.push({
       name,
       current: name === status.head,
       upstream: upstream?.trim() || undefined,
+      upstreamRemote: upstreamRemote?.trim() || undefined,
+      upstreamBranch: remoteRef?.startsWith("refs/heads/")
+        ? remoteRef.slice("refs/heads/".length)
+        : undefined,
     })
   }
 
