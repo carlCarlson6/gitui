@@ -1,4 +1,4 @@
-export type GitResult = {
+export type CommandResult = {
   code: number
   stdout: string
   stderr: string
@@ -6,10 +6,14 @@ export type GitResult = {
   command: string
 }
 
-export type GitOptions = {
+export type GitResult = CommandResult
+
+export type CommandOptions = {
   timeoutMs?: number
   env?: Record<string, string>
 }
+
+export type GitOptions = CommandOptions
 
 export class GitError extends Error {
   constructor(public readonly result: GitResult) {
@@ -33,8 +37,8 @@ function quoteArg(arg: string): string {
   return /^[A-Za-z0-9_./:=@+-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`
 }
 
-function commandLine(args: string[]): string {
-  return ["git", ...args].map(quoteArg).join(" ")
+function commandLine(argv: string[]): string {
+  return argv.map(quoteArg).join(" ")
 }
 
 function gitEnv(extra?: Record<string, string>): Record<string, string> {
@@ -61,18 +65,22 @@ function gitEnv(extra?: Record<string, string>): Record<string, string> {
 }
 
 /**
- * Run git without a shell. Network / hook commands get a longer timeout.
- * All commands are non-interactive so they can never take over the TUI.
+ * Run a process without a shell. All commands are non-interactive so they can
+ * never take over the TUI.
  */
-export async function runGit(args: string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {
-  const command = commandLine(args)
+export async function runProcess(
+  argv: string[],
+  cwd: string,
+  options: CommandOptions = {},
+): Promise<CommandResult> {
+  const command = commandLine(argv)
   const timeoutMs = options.timeoutMs ?? 30_000
 
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">
   try {
-    proc = Bun.spawn(["git", ...args], {
+    proc = Bun.spawn(argv, {
       cwd,
-      env: gitEnv(options.env),
+      env: options.env ?? (process.env as Record<string, string>),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -120,6 +128,17 @@ export async function runGit(args: string[], cwd: string, options: GitOptions = 
 
   const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise])
   return { code, stdout, stderr, timedOut, command }
+}
+
+/**
+ * Run git without a shell. Network / hook commands get a longer timeout.
+ * All commands are non-interactive so they can never take over the TUI.
+ */
+export async function runGit(args: string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {
+  return runProcess(["git", ...args], cwd, {
+    timeoutMs: options.timeoutMs,
+    env: gitEnv(options.env),
+  })
 }
 
 export async function runGitOrThrow(args: string[], cwd: string, options: GitOptions = {}): Promise<GitResult> {

@@ -1,10 +1,9 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
-import { homedir } from "node:os"
 import { basename } from "node:path"
 import { useEffect, useMemo, useRef } from "react"
 import type { RepoEntry } from "../types"
 import { theme } from "../theme"
-import { truncateRight } from "../lib/format"
+import { prettyPath, truncateRight } from "../lib/format"
 
 type Props = {
   entries: RepoEntry[]
@@ -12,19 +11,25 @@ type Props = {
   cursor: number
   loading: boolean
   error: string | null
+  notice: string | null
+  canCreate: boolean
   canGoBack: boolean
   currentRepoPath: string | null
   width: number
 }
 
-function prettyPath(path: string): string {
-  const home = homedir()
-  if (path === home) return "~"
-  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`
-  return path
-}
-
-export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, currentRepoPath, width }: Props) {
+export function RepoPicker({
+  entries,
+  roots,
+  cursor,
+  loading,
+  error,
+  notice,
+  canCreate,
+  canGoBack,
+  currentRepoPath,
+  width,
+}: Props) {
   const scrollRef = useRef<ScrollBoxRenderable>(null)
   const contentWidth = Math.max(20, width - 6)
   const branchWidth = Math.min(28, Math.max(10, Math.floor(contentWidth * 0.32)))
@@ -51,11 +56,18 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
 
   const rootsLabel = roots.map(prettyPath).join(" and ")
   const rightStatus = loading ? "Scanning…" : `${entries.length} found`
+  const createHint = canCreate ? " · n new repo (DEV)" : ""
   const footerHint = loading
     ? "scanning repositories…"
     : canGoBack
-      ? "j/k move · enter open · r rescan · esc back to repo · q quit"
-      : "j/k move · enter open · r rescan · q quit"
+      ? `j/k move · enter open${createHint} · r rescan · esc back to repo · q quit`
+      : `j/k move · enter open${createHint} · r rescan · q quit`
+
+  const detail = selected
+    ? `${prettyPath(selected.path)}${selected.branch ? ` · ${selected.branch}` : ""}${
+        selected.dirty ? " · uncommitted changes" : ""
+      }`
+    : rootsLabel
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg}>
@@ -151,15 +163,8 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
       </box>
 
       <box flexDirection="column" height={2} flexShrink={0} paddingLeft={1} paddingRight={1}>
-        <text fg={theme.muted} wrapMode="none">
-          {truncateRight(
-            selected
-              ? `${prettyPath(selected.path)}${selected.branch ? ` · ${selected.branch}` : ""}${
-                  selected.dirty ? " · uncommitted changes" : ""
-                }`
-              : rootsLabel,
-            Math.max(10, width - 2),
-          )}
+        <text fg={notice ? theme.yellow : theme.muted} wrapMode="none">
+          {truncateRight(notice ?? detail, Math.max(10, width - 2))}
         </text>
         <text fg={theme.dim} wrapMode="none">
           {truncateRight(footerHint, Math.max(10, width - 2))}

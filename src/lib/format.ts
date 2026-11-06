@@ -1,5 +1,13 @@
+import { homedir } from "node:os"
 import { basename } from "node:path"
 import { theme } from "../theme"
+
+export function prettyPath(path: string): string {
+  const home = homedir()
+  if (path === home) return "~"
+  if (path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`
+  return path
+}
 
 export function truncateRight(text: string, width: number): string {
   if (width <= 0) return ""

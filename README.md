@@ -2,14 +2,17 @@
 
 A small, keyboard-driven git client built with [OpenTUI](https://opentui.com) and React.
 
-It is intentionally narrow: one repository at a time, local branches, file-level staging, commits, fetch/pull/push, branch history and commit diff previews, and a confirmed undo for unstaged changes.
+It is intentionally narrow: one repository at a time, creating new public GitHub repositories in `~/DEV`, local branches, file-level staging, commits, fetch/pull/push, branch history and commit diff previews, and a confirmed undo for unstaged changes.
 
 By default it opens a repository picker that scans `~/DEV` and `~/FIT` for git working trees. Each entry shows the checked-out branch and a yellow `●` when that branch has uncommitted changes. You can also launch straight into a repository.
+
+While the cursor is on an entry from the `DEV` section, press `n` to create a new repository. Gitui asks for a name, creates the folder under `~/DEV`, runs `git init`, and uses the authenticated [GitHub CLI](https://cli.github.com) to create a matching **public** repository with `origin` configured. This shortcut is only available for the `DEV` section.
 
 ## Requirements
 
 - [Bun](https://bun.sh) 1.3.14 or newer
 - `git` on your `PATH`
+- `gh` on your `PATH`, authenticated with `gh auth login` (for creating new GitHub repositories)
 - A terminal at least 70×20
 - SSH keys loaded in `ssh-agent` (or HTTPS credentials available through your git credential helper)
 
@@ -33,6 +36,7 @@ In direct mode, the path must be inside a git working tree.
 
 ## What it does
 
+- **Repositories** — scans `~/DEV` and `~/FIT`, shows each repo's branch and whether it has uncommitted changes. With the cursor on a repo in the `DEV` section, `n` creates a folder, initializes git, and creates a public GitHub repository.
 - **Branches** — local branches, current branch marked with `*`. Branches is selected when a repository opens. Selecting a branch previews its last 100 commits without checking it out. While Branches is focused, the right pane shows a graph of all local and remote branches. `Enter` checks the selected branch out. `a` creates a new branch from the selected branch and checks it out. `d` deletes the local branch; `D` deletes it together with its upstream remote branch after a confirmation prompt.
 - **Changes** — staged, unstaged, untracked and conflicted files. File-level stage/unstage, stage all, unstage all, and undo the selected unstaged change or all unstaged changes. Undo restores tracked files from the index (staged changes are kept) and deletes selected untracked files after a confirmation prompt. While Changes is focused, the right pane shows the selected file's diff.
 - **Commits** — the selected branch's last 100 commits. While Commits is focused, the right pane shows the selected commit's metadata, stat and full diff across every changed file.
@@ -62,12 +66,13 @@ In direct mode, the path must be inside a git working tree.
 | `f` | fetch all remotes (`--prune`) |
 | `p` / `P` | pull / push |
 | `r` | refresh |
+| `n` | picker: create a public GitHub repo in the `DEV` section |
 | `b` | switch repository |
 | `?` | help |
 | `q` | quit |
 | `Esc` | close modal / toggle the repository list |
 
-Repository picker: `j`/`k` move, `g`/`G` top/bottom, `Enter` open, `r` rescan, `Esc` return to the last open repo, `q` quit.
+Repository picker: `j`/`k` move, `g`/`G` top/bottom, `Enter` open, `n` new repository (DEV only), `r` rescan, `Esc` return to the last open repo, `q` quit.
 
 ## Deliberate limitations
 

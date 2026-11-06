@@ -1,5 +1,6 @@
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { basename } from "node:path"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { BranchPanel } from "./components/BranchPanel"
 import { ChangesPanel } from "./components/ChangesPanel"
@@ -10,6 +11,7 @@ import { Footer } from "./components/Footer"
 import { Header } from "./components/Header"
 import { MainPane, type MainContent } from "./components/MainPane"
 import { ModalFrame, TextModal } from "./components/Modal"
+import { NewRepoModal } from "./components/NewRepoModal"
 import { RepoPicker } from "./components/RepoPicker"
 import {
   checkoutBranch,
@@ -26,6 +28,7 @@ import {
   unstageAll,
   unstagePaths,
 } from "./git/actions"
+import { createRepo } from "./git/create"
 import { readFilePreview } from "./git/diff"
 import { GitError, UserError, errorTitle, errorToText } from "./git/exec"
 import { readBranchGraph, readCommit, readLog } from "./git/history"
@@ -40,7 +43,7 @@ import {
 } from "./git/repo"
 import { buildFileRows, conflictPaths, displayPath, groupRows, hasConflicts } from "./git/status"
 import { defaultRepoRoots, scanRepos } from "./git/scan"
-import { firstLine, truncateRight } from "./lib/format"
+import { firstLine, prettyPath, truncateRight } from "./lib/format"
 import { theme } from "./theme"
 import type {
   Branch,
@@ -218,6 +221,10 @@ export function App({ startPath }: Props) {
   const [pickerCursor, setPickerCursor] = useState(0)
   const [pickerLoading, setPickerLoading] = useState(!startPath)
   const [pickerError, setPickerError] = useState<string | null>(null)
+  const [pickerNotice, setPickerNotice] = useState<string | null>(null)
+  const [newRepoRoot, setNewRepoRoot] = useState<string | null>(null)
+  const [newRepoBusy, setNewRepoBusy] = useState(false)
+  const [newRepoError, setNewRepoError] = useState<string | null>(null)
 
   const [phase, setPhase] = useState<Phase>("boot")
   const [startupError, setStartupError] = useState<ErrorInfo | null>(null)
@@ -284,6 +291,10 @@ export function App({ startPath }: Props) {
   }, [historyBranch, currentBranch, status?.detached])
 
   const activity = busy ?? (refreshing ? "Refreshing" : null)
+  const pickerDevRoot = useMemo(
+    () => pickerRoots.find((path) => basename(path).toLowerCase() === "dev") ?? null,
+    [pickerRoots],
+  )
   const tooSmall = width < 70 || height < 20
   const leftWidth = Math.max(32, Math.min(52, Math.floor(width * 0.38)))
   const modalWidth = Math.max(40, Math.min(width - 6, 104))
@@ -292,6 +303,8 @@ export function App({ startPath }: Props) {
   const commitHeight = Math.max(14, Math.min(height - 4, 20))
   const branchWidth = Math.max(44, Math.min(width - 8, 72))
   const branchHeight = Math.max(12, Math.min(height - 4, 15))
+  const newRepoWidth = Math.max(44, Math.min(width - 8, 76))
+  const newRepoHeight = Math.max(14, Math.min(height - 4, 18))
   const textModalBody =
     modal.type === "error"
       ? modal.body
@@ -421,7 +434,7 @@ export function App({ startPath }: Props) {
     historyBranchRef.current = historyBranch
   }, [historyBranch])
 
-  const scanPicker = useCallback(async () => {
+  const scanPicker = useCallback(async (selectPath?: string) => {
     const seq = ++pickerScanSeq.current
     setPickerLoading(true)
     setPickerError(null)
@@ -432,7 +445,7 @@ export function App({ startPath }: Props) {
       setPickerRoots(roots)
       setPickerRepos(list)
       setPickerCursor((current) => {
-        const selectedPath = pickerSelectedPathRef.current
+        const selectedPath = selectPath ?? pickerSelectedPathRef.current
         if (selectedPath) {
           const index = list.findIndex((entry) => entry.path === selectedPath)
           if (index >= 0) return index
@@ -771,11 +784,13 @@ export function App({ startPath }: Props) {
   }
 
   const movePicker = (delta: number) => {
+    setPickerNotice(null)
     if (!pickerRepos.length) return
     setPickerCursor((current) => Math.max(0, Math.min(pickerRepos.length - 1, current + delta)))
   }
 
   const jumpPicker = (end: boolean) => {
+    setPickerNotice(null)
     if (!pickerRepos.length) return
     setPickerCursor(end ? pickerRepos.length - 1 : 0)
   }
@@ -844,7 +859,54 @@ export function App({ startPath }: Props) {
     if (root) pickerSelectedPathRef.current = root
     setPickerLoading(true)
     setPickerError(null)
+    setPickerNotice(null)
+    setNewRepoRoot(null)
+    setNewRepoError(null)
     setScreen("picker")
+  }
+
+  const openNewRepo = () => {
+    if (!pickerDevRoot) {
+      setPickerNotice("No DEV repository folder is configured.")
+      return
+    }
+    const entry = pickerRepos[pickerCursor]
+    if (!entry || entry.root !== pickerDevRoot) {
+      setPickerNotice(`New repositories can only be created in ${prettyPath(pickerDevRoot)}.`)
+      return
+    }
+    setPickerNotice(null)
+    setNewRepoError(null)
+    setNewRepoRoot(pickerDevRoot)
+  }
+
+  const closeNewRepo = () => {
+    if (newRepoBusy) return
+    setNewRepoRoot(null)
+    setNewRepoError(null)
+  }
+
+  const submitNewRepo = async (name: string) => {
+    if (!newRepoRoot || newRepoBusy) return
+    const root = newRepoRoot
+    setNewRepoBusy(true)
+    setNewRepoError(null)
+    try {
+      const created = await createRepo(root, name)
+      setNewRepoRoot(null)
+      setPickerNotice(
+        created.url
+          ? `Created public GitHub repository ${created.name} · ${created.url}`
+          : `Created public GitHub repository ${created.name} in ${prettyPath(root)}`,
+      )
+      await scanPicker(created.path)
+    } catch (error) {
+      setNewRepoError(errorToText(error))
+      // A local repository may exist even when GitHub creation failed.
+      void scanPicker()
+    } finally {
+      setNewRepoBusy(false)
+    }
   }
 
   const toggleStage = () => {
@@ -1234,6 +1296,7 @@ export function App({ startPath }: Props) {
     }
 
     if (screen === "picker") {
+      if (newRepoRoot) return
       if (key.name === "q") {
         key.preventDefault()
         renderer.destroy()
@@ -1271,6 +1334,11 @@ export function App({ startPath }: Props) {
         movePicker(-10)
         return
       }
+      if (key.name === "n") {
+        key.preventDefault()
+        openNewRepo()
+        return
+      }
       if (key.name === "return" || key.name === "enter") {
         key.preventDefault()
         const entry = pickerRepos[pickerCursor]
@@ -1279,6 +1347,7 @@ export function App({ startPath }: Props) {
       }
       if (key.name === "r") {
         key.preventDefault()
+        setPickerNotice(null)
         void scanPicker()
         return
       }
@@ -1519,16 +1588,31 @@ export function App({ startPath }: Props) {
 
   if (screen === "picker") {
     return (
-      <RepoPicker
-        entries={pickerRepos}
-        roots={pickerRoots}
-        cursor={pickerCursor}
-        loading={pickerLoading}
-        error={pickerError}
-        canGoBack={!!launchPath || !!root}
-        currentRepoPath={root}
-        width={width}
-      />
+      <box width="100%" height="100%">
+        <RepoPicker
+          entries={pickerRepos}
+          roots={pickerRoots}
+          cursor={pickerCursor}
+          loading={pickerLoading}
+          error={pickerError}
+          notice={pickerNotice}
+          canCreate={pickerDevRoot !== null}
+          canGoBack={!!launchPath || !!root}
+          currentRepoPath={root}
+          width={width}
+        />
+        {newRepoRoot ? (
+          <NewRepoModal
+            root={newRepoRoot}
+            width={newRepoWidth}
+            height={newRepoHeight}
+            busy={newRepoBusy}
+            actionError={newRepoError}
+            onSubmit={(name) => void submitNewRepo(name)}
+            onCancel={closeNewRepo}
+          />
+        ) : null}
+      </box>
     )
   }
 
