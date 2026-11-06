@@ -536,6 +536,14 @@ export function App({ startPath }: Props) {
     return false
   }, [operation])
 
+  const ensurePreviewIsCurrent = (verb: string): boolean => {
+    if (historyBranch && currentBranch && historyBranch !== currentBranch) {
+      setMessage(`Check out ${historyBranch} before ${verb}.`)
+      return false
+    }
+    return true
+  }
+
   const moveFile = (delta: number) => {
     if (!fileRows.length) return
     setFileCursor((current) => Math.max(0, Math.min(fileRows.length - 1, current + delta)))
@@ -671,6 +679,7 @@ export function App({ startPath }: Props) {
       setMessage("Check out a branch before pulling.")
       return
     }
+    if (!ensurePreviewIsCurrent("pulling")) return
     void perform("Pulling", async () => {
       const remotes = await readRemotes(root)
       if (!remotes.length) throw new UserError("No remotes configured. Add a remote before pulling.")
@@ -694,6 +703,7 @@ export function App({ startPath }: Props) {
       setMessage("Check out a branch before pushing.")
       return
     }
+    if (!ensurePreviewIsCurrent("pushing")) return
     void perform("Pushing", async () => {
       const result = await pushRepo(root)
       await refreshRepo()
@@ -721,10 +731,7 @@ export function App({ startPath }: Props) {
       setMessage("Detached HEAD — check out a branch before committing.")
       return
     }
-    if (historyBranch && historyBranch !== currentBranch) {
-      setMessage(`Check out ${historyBranch} to commit.`)
-      return
-    }
+    if (!ensurePreviewIsCurrent("committing")) return
     if (amend && (!status || status.unborn || !status.oid)) {
       setMessage("There is no commit to amend yet.")
       return
