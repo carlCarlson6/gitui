@@ -54,7 +54,7 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
   const footerHint = loading
     ? "scanning repositories…"
     : canGoBack
-      ? "j/k move · enter open · r rescan · esc back · q quit"
+      ? "j/k move · enter open · r rescan · esc back to repo · q quit"
       : "j/k move · enter open · r rescan · q quit"
 
   return (

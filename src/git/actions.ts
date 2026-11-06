@@ -40,6 +40,43 @@ export async function unstageAll(root: string) {
   }
 }
 
+export type DiscardTarget = {
+  path: string
+  untracked: boolean
+}
+
+/** Treat paths as literals so filenames containing glob characters stay safe. */
+function literalPaths(paths: string[]): string[] {
+  return paths.map((path) => `:(literal)${path}`)
+}
+
+/**
+ * Discard unstaged changes for the given paths. Tracked files are restored
+ * from the index (so staged content is preserved); untracked files are deleted.
+ */
+export async function discardUnstagedChanges(root: string, targets: DiscardTarget[]) {
+  if (!targets.length) return
+
+  const tracked = [
+    ...new Set(targets.filter((target) => !target.untracked).map((target) => target.path)),
+  ]
+  const untracked = [
+    ...new Set(targets.filter((target) => target.untracked).map((target) => target.path)),
+  ]
+
+  if (tracked.length) {
+    await runGitOrThrow(["restore", "--worktree", "--", ...literalPaths(tracked)], root, {
+      timeoutMs: LOCAL_TIMEOUT,
+    })
+  }
+
+  if (untracked.length) {
+    await runGitOrThrow(["clean", "-f", "--", ...literalPaths(untracked)], root, {
+      timeoutMs: LOCAL_TIMEOUT,
+    })
+  }
+}
+
 export async function commitChanges(root: string, message: string, amend: boolean) {
   const args = ["commit", "-m", message]
   if (amend) args.push("--amend")

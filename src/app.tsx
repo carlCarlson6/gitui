@@ -13,6 +13,7 @@ import { RepoPicker } from "./components/RepoPicker"
 import {
   checkoutBranch,
   commitChanges,
+  discardUnstagedChanges,
   fetchAll,
   pullRepo,
   pushRepo,
@@ -33,7 +34,7 @@ import {
   readStatus,
   type Operation,
 } from "./git/repo"
-import { buildFileRows, conflictPaths, groupRows, hasConflicts } from "./git/status"
+import { buildFileRows, conflictPaths, displayPath, groupRows, hasConflicts } from "./git/status"
 import { defaultRepoRoots, scanRepos } from "./git/scan"
 import { firstLine, truncateRight } from "./lib/format"
 import { theme } from "./theme"
@@ -58,6 +59,7 @@ type ModalState =
   | { type: "help" }
   | { type: "error"; title: string; body: string }
   | { type: "conflicts"; paths: string[] }
+  | { type: "discard"; rows: FileRow[] }
 
 type Props = {
   startPath: string | null
@@ -76,16 +78,19 @@ Panels
   b                   switch repository
   q                   quit
   ?                   show this help
-  Esc                 close modal / return to Changes
+  Esc                 close modal / toggle repositories
 
 Changes
   space               stage or unstage the selected file
-  a                   stage all changes
-  u                   unstage all changes
+  u                   stage the selected unstaged file
+  A                   stage all changes
+  U                   unstage all changes
+  d                   undo the selected unstaged change
+  D                   undo all unstaged changes
 
 Git
   c                   commit staged changes
-  A                   amend the last commit
+  Ctrl+A              amend the last commit
   f                   fetch all remotes (--prune)
   p                   pull (honors your git config)
   P                   push (sets upstream on first push)
@@ -101,7 +106,8 @@ Notes
   • Resolve conflicted files in your editor, then stage them here one by one.
   • If a rebase is in progress, finish it with git rebase --continue.
   • Network commands use your existing SSH agent / credential helper and never prompt inside the TUI.
-  • No discard, reset, force-push or branch deletion in this version.`
+  • d/D discard worktree changes after confirmation; untracked files are deleted and staged changes are kept.
+  • No reset, force-push or branch deletion in this version.`
 
 function failureInfo(error: unknown): ErrorInfo {
   return { title: errorTitle(error), body: errorToText(error) }
@@ -139,6 +145,27 @@ function conflictsBody(paths: string[], operation: Operation): string {
     lines.push("If a rebase or other multi-step operation is in progress, finish it in your terminal.")
   }
 
+  return lines.join("\n")
+}
+
+function discardBody(rows: FileRow[]): string {
+  const untrackedCount = rows.filter((row) => row.untracked).length
+  const trackedCount = rows.length - untrackedCount
+  const lines = [
+    rows.length === 1 ? "Undo this unstaged change?" : `Undo these ${rows.length} unstaged changes?`,
+    "",
+    ...rows.map((row) => `  ${row.code.padEnd(2)} ${displayPath(row)}`),
+    "",
+  ]
+
+  if (trackedCount > 0) {
+    lines.push("Tracked files are restored from the index. Staged changes are kept.")
+  }
+  if (untrackedCount > 0) {
+    lines.push("Untracked files are deleted from disk.")
+  }
+
+  lines.push("", "This cannot be undone.")
   return lines.join("\n")
 }
 
@@ -220,8 +247,10 @@ export function App({ startPath }: Props) {
       ? modal.body
       : modal.type === "conflicts"
         ? conflictsBody(modal.paths, operation)
-        : ""
-  const errorModalHeight = Math.max(9, Math.min(modalHeight, textModalBody.split("\n").length + 6))
+        : modal.type === "discard"
+          ? discardBody(modal.rows)
+          : ""
+  const textModalHeight = Math.max(9, Math.min(modalHeight, textModalBody.split("\n").length + 6))
 
   const showError = useCallback((error: unknown) => {
     setModal({ type: "error", ...failureInfo(error) })
@@ -723,6 +752,31 @@ export function App({ startPath }: Props) {
     })
   }
 
+  const stageSelected = () => {
+    if (!root || focus !== "changes") return
+    const row = fileRows[fileCursor]
+    if (!row) {
+      setMessage("No file selected.")
+      return
+    }
+    if (row.section === "staged") {
+      setMessage("The selected file is already staged. Press space to unstage it.")
+      return
+    }
+    if (row.section === "conflicted") {
+      setMessage("Resolve the file, then press space to mark it resolved.")
+      return
+    }
+    const paths = row.origPath ? [row.origPath, row.path] : [row.path]
+
+    void perform("Staging", async () => {
+      await stagePaths(root, paths)
+      pendingFileKeyRef.current = `staged:${row.path}`
+      await refreshRepo()
+      setMessage("Staged")
+    })
+  }
+
   const stageEverything = () => {
     if (!root) return
     if (hasConflicts(status)) {
@@ -748,6 +802,44 @@ export function App({ startPath }: Props) {
       pendingFileKeyRef.current = null
       await refreshRepo()
       setMessage("Unstaged all changes")
+    })
+  }
+
+  const openDiscard = (scope: "file" | "all") => {
+    if (!root) return
+    const rows = scope === "file" ? fileRows.slice(fileCursor, fileCursor + 1) : groupedRows.unstaged
+    if (!rows.length) {
+      setMessage(scope === "file" ? "No file selected." : "No unstaged changes to undo.")
+      return
+    }
+    if (scope === "file" && rows[0]!.section === "conflicted") {
+      setMessage("Conflicted files cannot be undone. Resolve them first.")
+      return
+    }
+    if (scope === "file" && rows[0]!.section !== "unstaged") {
+      setMessage("Only unstaged changes can be undone. Unstage the file first.")
+      return
+    }
+    if (!ensureNoConflicts()) return
+    setModal({ type: "discard", rows })
+  }
+
+  const confirmDiscard = () => {
+    if (!root || modal.type !== "discard") return
+    const rows = modal.rows
+    setModal({ type: "none" })
+    void perform(rows.length === 1 ? "Undoing changes" : "Undoing all unstaged changes", async () => {
+      await discardUnstagedChanges(
+        root,
+        rows.map((row) => ({ path: row.path, untracked: row.untracked })),
+      )
+      pendingFileKeyRef.current = null
+      await refreshRepo()
+      setMessage(
+        rows.length === 1
+          ? `Undid the unstaged change in ${displayPath(rows[0]!)}`
+          : `Undid ${rows.length} unstaged changes`,
+      )
     })
   }
 
@@ -985,6 +1077,18 @@ export function App({ startPath }: Props) {
 
     if (modal.type !== "none") {
       if (modal.type === "commit") return
+      if (modal.type === "discard") {
+        if (key.name === "y" || key.name === "return" || key.name === "enter") {
+          key.preventDefault()
+          confirmDiscard()
+          return
+        }
+        if (key.name === "n") {
+          key.preventDefault()
+          setModal({ type: "none" })
+          return
+        }
+      }
       if (key.name === "escape" || key.name === "?" || key.name === "q") {
         key.preventDefault()
         setModal({ type: "none" })
@@ -1029,6 +1133,11 @@ export function App({ startPath }: Props) {
 
     if (busyRef.current) return
 
+    if (key.name === "escape") {
+      key.preventDefault()
+      openPicker()
+      return
+    }
     if (key.name === "b") {
       key.preventDefault()
       openPicker()
@@ -1059,7 +1168,7 @@ export function App({ startPath }: Props) {
       openCommit(false)
       return
     }
-    if (key.name === "a" && key.shift) {
+    if (key.ctrl && key.name === "a") {
       key.preventDefault()
       openCommit(true)
       return
@@ -1111,12 +1220,16 @@ export function App({ startPath }: Props) {
       } else if (key.name === "space") {
         key.preventDefault()
         toggleStage()
-      } else if (key.name === "a") {
-        key.preventDefault()
-        stageEverything()
       } else if (key.name === "u") {
         key.preventDefault()
-        unstageEverything()
+        if (key.shift) unstageEverything()
+        else stageSelected()
+      } else if (key.name === "a" && key.shift) {
+        key.preventDefault()
+        stageEverything()
+      } else if (key.name === "d") {
+        key.preventDefault()
+        openDiscard(key.shift ? "all" : "file")
       } else if (key.name === "return") {
         key.preventDefault()
         setFocus("main")
@@ -1158,9 +1271,6 @@ export function App({ startPath }: Props) {
         key.preventDefault()
         if (key.shift) mainScrollRef.current?.scrollTo(Number.MAX_SAFE_INTEGER)
         else mainScrollRef.current?.scrollTo(0)
-      } else if (key.name === "escape") {
-        key.preventDefault()
-        setFocus("changes")
       }
     }
   })
@@ -1346,7 +1456,7 @@ export function App({ startPath }: Props) {
           title={modal.title}
           body={modal.body}
           width={modalWidth}
-          height={errorModalHeight}
+          height={textModalHeight}
           scrollRef={modalScrollRef}
           footer="esc / q close · j/k scroll"
           color={theme.text}
@@ -1357,7 +1467,7 @@ export function App({ startPath }: Props) {
         <ModalFrame
           title="Unresolved conflicts"
           width={modalWidth}
-          height={errorModalHeight}
+          height={textModalHeight}
           footer="esc close · stage files individually to mark them resolved"
         >
           <scrollbox ref={modalScrollRef} focusable={false} width="100%" height="100%">
@@ -1366,6 +1476,18 @@ export function App({ startPath }: Props) {
             </box>
           </scrollbox>
         </ModalFrame>
+      ) : null}
+
+      {modal.type === "discard" ? (
+        <TextModal
+          title={modal.rows.length === 1 ? "Undo unstaged change" : "Undo unstaged changes"}
+          body={discardBody(modal.rows)}
+          width={modalWidth}
+          height={textModalHeight}
+          scrollRef={modalScrollRef}
+          footer="y / enter undo · n / esc cancel"
+          color={theme.text}
+        />
       ) : null}
     </box>
   )
