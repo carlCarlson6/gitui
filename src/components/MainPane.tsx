@@ -106,7 +106,7 @@ export function MainPane({ title, preview, data, loading, focused, scrollRef }: 
               ) : null}
               {data.data.stat ? (
                 <box marginTop={1} width="100%">
-                  <text content={data.data.stat} fg={theme.muted} wrapMode="none" />
+                  <text content={data.data.stat} fg={theme.muted} wrapMode="word" />
                 </box>
               ) : null}
               <box marginTop={1} width="100%">
