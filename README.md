@@ -2,7 +2,9 @@
 
 A small, keyboard-driven git client built with [OpenTUI](https://opentui.com) and React.
 
-It is intentionally narrow: one repository, local branches, file-level staging, commits, fetch/pull/push, and a branch history preview. Nothing destructive.
+It is intentionally narrow: one repository at a time, local branches, file-level staging, commits, fetch/pull/push, and a branch history preview. Nothing destructive.
+
+By default it opens a repository picker that scans `~/DEV` and `~/FIT` for git working trees. You can also launch straight into a repository.
 
 ## Requirements
 
@@ -17,11 +19,17 @@ Network commands run non-interactively so they can never take over the terminal.
 
 ```sh
 bun install
-bun run dev                 # current directory
-bun run dev /path/to/repo   # another repository
+bun run dev                    # repository picker (~/DEV and ~/FIT)
+bun run dev /path/to/repo      # open a repository directly
 ```
 
-The current directory (or the given path) must be inside a git working tree.
+The picker scans up to eight directory levels, skips hidden directories and common build/dependency folders, and stops at each repository root. Override the scan roots with a colon-separated list:
+
+```sh
+GITUI_REPO_ROOTS="$HOME/DEV:$HOME/FIT" bun run dev
+```
+
+In direct mode, the path must be inside a git working tree.
 
 ## What it does
 
@@ -49,16 +57,19 @@ The current directory (or the given path) must be inside a git working tree.
 | `f` | fetch all remotes (`--prune`) |
 | `p` / `P` | pull / push |
 | `r` | refresh |
+| `b` | switch repository |
 | `?` | help |
 | `q` | quit |
 | `Esc` | close modal / return to Changes |
+
+Repository picker: `j`/`k` move, `g`/`G` top/bottom, `Enter` open, `r` rescan, `Esc` go back to the open repo, `q` quit.
 
 ## Deliberate limitations
 
 - No hunk or line staging
 - No in-app conflict resolver; no editor launching
 - No stash, rebase UI, cherry-pick, revert, reset, discard or force push
-- No remote-branch list, branch creation/deletion, or multi-repo picker
+- No remote-branch list, branch creation/deletion, or worktree switching inside a repo
 - History is capped at the last 100 commits per branch
 - No filesystem watcher; refresh after actions with `r`
 

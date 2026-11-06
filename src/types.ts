@@ -92,3 +92,12 @@ export type ErrorInfo = {
   title: string
   body: string
 }
+
+export type RepoEntry = {
+  name: string
+  path: string
+  root: string
+  rootLabel: string
+  relativePath: string
+  branch?: string
+}

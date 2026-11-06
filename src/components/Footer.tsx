@@ -4,12 +4,12 @@ import { truncateRight } from "../lib/format"
 
 const HINTS: Record<Panel, string> = {
   branches:
-    "j/k move · enter checkout · tab next · c commit · f fetch · p pull · P push · ? help · q quit",
+    "j/k move · enter checkout · tab next · c commit · f fetch · p pull · P push · b repos · ? help · q quit",
   changes:
-    "space stage/unstage · a stage all · u unstage all · enter scroll diff · tab next · c commit · r refresh · ? help",
+    "space stage/unstage · a stage all · u unstage all · enter scroll diff · tab next · c commit · b repos · ? help",
   commits:
-    "j/k preview commit · g/G top/bottom · enter scroll diff · tab next · c commit · f fetch · ? help · q quit",
-  main: "j/k scroll · PgUp/PgDn · g/G top/bottom · tab next · esc changes · ? help · q quit",
+    "j/k preview commit · g/G top/bottom · enter scroll diff · tab next · c commit · b repos · ? help · q quit",
+  main: "j/k scroll · PgUp/PgDn · g/G top/bottom · tab next · esc changes · b repos · ? help · q quit",
 }
 
 type Props = {

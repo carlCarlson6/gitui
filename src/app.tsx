@@ -9,6 +9,7 @@ import { Footer } from "./components/Footer"
 import { Header } from "./components/Header"
 import { MainPane } from "./components/MainPane"
 import { ModalFrame, TextModal } from "./components/Modal"
+import { RepoPicker } from "./components/RepoPicker"
 import {
   checkoutBranch,
   commitChanges,
@@ -33,6 +34,7 @@ import {
   type Operation,
 } from "./git/repo"
 import { buildFileRows, conflictPaths, groupRows, hasConflicts } from "./git/status"
+import { defaultRepoRoots, scanRepos } from "./git/scan"
 import { firstLine, truncateRight } from "./lib/format"
 import { theme } from "./theme"
 import type {
@@ -44,6 +46,7 @@ import type {
   Panel,
   Preview,
   PreviewData,
+  RepoEntry,
   StatusSnapshot,
 } from "./types"
 
@@ -57,7 +60,7 @@ type ModalState =
   | { type: "conflicts"; paths: string[] }
 
 type Props = {
-  startPath: string
+  startPath: string | null
 }
 
 const PANEL_ORDER: Panel[] = ["branches", "changes", "commits", "main"]
@@ -70,6 +73,7 @@ Panels
   j/k or ↑/↓          move selection / scroll
   g / G               top / bottom
   Enter               checkout branch / focus preview
+  b                   switch repository
   q                   quit
   ?                   show this help
   Esc                 close modal / return to Changes
@@ -142,6 +146,15 @@ export function App({ startPath }: Props) {
   const renderer = useRenderer()
   const { width, height } = useTerminalDimensions()
 
+  const [screen, setScreen] = useState<"picker" | "repo">(startPath ? "repo" : "picker")
+  const [launchPath, setLaunchPath] = useState<string | null>(startPath)
+  const [repoEpoch, setRepoEpoch] = useState(0)
+  const [pickerRepos, setPickerRepos] = useState<RepoEntry[]>([])
+  const [pickerRoots, setPickerRoots] = useState<string[]>(() => defaultRepoRoots())
+  const [pickerCursor, setPickerCursor] = useState(0)
+  const [pickerLoading, setPickerLoading] = useState(!startPath)
+  const [pickerError, setPickerError] = useState<string | null>(null)
+
   const [phase, setPhase] = useState<Phase>("boot")
   const [startupError, setStartupError] = useState<ErrorInfo | null>(null)
   const [root, setRoot] = useState<string | null>(null)
@@ -177,6 +190,8 @@ export function App({ startPath }: Props) {
   const lastHistoryRef = useRef<string | null | undefined>(undefined)
   const selectedFileKeyRef = useRef<string | null>(null)
   const pendingFileKeyRef = useRef<string | null>(null)
+  const pickerSelectedPathRef = useRef<string | null>(null)
+  const pickerScanSeq = useRef(0)
   const commitCacheRef = useRef(new Map<string, CommitDetail>())
   const mainScrollRef = useRef<ScrollBoxRenderable>(null)
   const modalScrollRef = useRef<ScrollBoxRenderable>(null)
@@ -273,12 +288,13 @@ export function App({ startPath }: Props) {
     [root, selectHistoryBranch],
   )
 
-  // Discover the repository once, from the launch path.
+  // Discover the repository selected in the picker or passed on the command line.
   useEffect(() => {
+    if (!launchPath) return
     let cancelled = false
     void (async () => {
       try {
-        const discovered = await discoverRepo(startPath)
+        const discovered = await discoverRepo(launchPath)
         if (!cancelled) setRoot(discovered)
       } catch (error) {
         if (!cancelled) {
@@ -291,7 +307,7 @@ export function App({ startPath }: Props) {
       cancelled = true
       refreshSeq.current++
     }
-  }, [startPath])
+  }, [launchPath, repoEpoch])
 
   // First load once the root is known.
   useEffect(() => {
@@ -324,6 +340,42 @@ export function App({ startPath }: Props) {
   useEffect(() => {
     historyBranchRef.current = historyBranch
   }, [historyBranch])
+
+  const scanPicker = useCallback(async () => {
+    const seq = ++pickerScanSeq.current
+    setPickerLoading(true)
+    setPickerError(null)
+    try {
+      const roots = defaultRepoRoots()
+      const list = await scanRepos(roots)
+      if (seq !== pickerScanSeq.current) return
+      setPickerRoots(roots)
+      setPickerRepos(list)
+      setPickerCursor((current) => {
+        const selectedPath = pickerSelectedPathRef.current
+        if (selectedPath) {
+          const index = list.findIndex((entry) => entry.path === selectedPath)
+          if (index >= 0) return index
+        }
+        return Math.max(0, Math.min(current, list.length - 1))
+      })
+    } catch (error) {
+      if (seq !== pickerScanSeq.current) return
+      setPickerError(errorToText(error))
+    } finally {
+      if (seq === pickerScanSeq.current) setPickerLoading(false)
+    }
+  }, [])
+
+  // Scan whenever the picker is shown so newly created repositories appear.
+  useEffect(() => {
+    if (screen === "picker") void scanPicker()
+  }, [screen, scanPicker])
+
+  useEffect(() => {
+    const selected = pickerRepos[pickerCursor]
+    pickerSelectedPathRef.current = selected?.path ?? null
+  }, [pickerRepos, pickerCursor])
 
   // Load the history of the highlighted branch.
   useEffect(() => {
@@ -585,6 +637,73 @@ export function App({ startPath }: Props) {
     })
   }
 
+  const movePicker = (delta: number) => {
+    if (!pickerRepos.length) return
+    setPickerCursor((current) => Math.max(0, Math.min(pickerRepos.length - 1, current + delta)))
+  }
+
+  const jumpPicker = (end: boolean) => {
+    if (!pickerRepos.length) return
+    setPickerCursor(end ? pickerRepos.length - 1 : 0)
+  }
+
+  const resetRepoState = () => {
+    refreshSeq.current++
+    commitsSeq.current++
+    previewSeq.current++
+    busyRef.current = false
+    didInitRef.current = false
+    historyBranchRef.current = null
+    currentBranchRef.current = null
+    lastHistoryRef.current = undefined
+    commitHashRef.current = null
+    resetCommitRef.current = false
+    selectedFileKeyRef.current = null
+    pendingFileKeyRef.current = null
+    commitCacheRef.current.clear()
+
+    setRoot(null)
+    setStatus(null)
+    setOperation(null)
+    setBranches([])
+    setHistoryBranchState(null)
+    setCommits([])
+    setCommitsLoading(false)
+    setCommitsError(null)
+    setDataVersion(0)
+    setRefreshing(false)
+    setFocus("changes")
+    setFileCursor(0)
+    setCommitCursor(0)
+    setPreview(null)
+    setPreviewData(null)
+    setPreviewLoading(false)
+    setBusy(null)
+    setMessage("")
+    setModal({ type: "none" })
+    setCommitError(null)
+    setStartupError(null)
+  }
+
+  const openRepo = (entry: RepoEntry) => {
+    if (entry.path === root && phase === "ready") {
+      setScreen("repo")
+      return
+    }
+    resetRepoState()
+    setLaunchPath(entry.path)
+    setRepoEpoch((epoch) => epoch + 1)
+    setScreen("repo")
+    setPhase("boot")
+  }
+
+  const openPicker = () => {
+    if (root) pickerSelectedPathRef.current = root
+    setPickerLoading(true)
+    setPickerError(null)
+    setScreen("picker")
+  }
+
   const toggleStage = () => {
     if (!root || focus !== "changes") return
     const row = fileRows[fileCursor]
@@ -793,8 +912,71 @@ export function App({ startPath }: Props) {
   useKeyboard((key) => {
     const ctrlC = key.ctrl && key.name === "c"
 
+    if (ctrlC) {
+      key.preventDefault()
+      renderer.destroy()
+      return
+    }
+
+    if (screen === "picker") {
+      if (key.name === "q") {
+        key.preventDefault()
+        renderer.destroy()
+        return
+      }
+      if (key.name === "escape") {
+        key.preventDefault()
+        if (launchPath || root) setScreen("repo")
+        else renderer.destroy()
+        return
+      }
+      if (pickerLoading) return
+      if (key.name === "j" || key.name === "down") {
+        key.preventDefault()
+        movePicker(1)
+        return
+      }
+      if (key.name === "k" || key.name === "up") {
+        key.preventDefault()
+        movePicker(-1)
+        return
+      }
+      if (key.name === "g") {
+        key.preventDefault()
+        jumpPicker(key.shift)
+        return
+      }
+      if (key.name === "pagedown") {
+        key.preventDefault()
+        movePicker(10)
+        return
+      }
+      if (key.name === "pageup") {
+        key.preventDefault()
+        movePicker(-10)
+        return
+      }
+      if (key.name === "return" || key.name === "enter") {
+        key.preventDefault()
+        const entry = pickerRepos[pickerCursor]
+        if (entry) openRepo(entry)
+        return
+      }
+      if (key.name === "r") {
+        key.preventDefault()
+        void scanPicker()
+        return
+      }
+      return
+    }
+
     if (phase !== "ready") {
-      if (key.name === "q" || key.name === "escape" || ctrlC) {
+      if (key.name === "b") {
+        key.preventDefault()
+        openPicker()
+        return
+      }
+      if (key.name === "q" || key.name === "escape") {
         key.preventDefault()
         renderer.destroy()
       }
@@ -803,11 +985,6 @@ export function App({ startPath }: Props) {
 
     if (modal.type !== "none") {
       if (modal.type === "commit") return
-      if (ctrlC) {
-        key.preventDefault()
-        renderer.destroy()
-        return
-      }
       if (key.name === "escape" || key.name === "?" || key.name === "q") {
         key.preventDefault()
         setModal({ type: "none" })
@@ -842,12 +1019,6 @@ export function App({ startPath }: Props) {
       return
     }
 
-    if (ctrlC) {
-      key.preventDefault()
-      renderer.destroy()
-      return
-    }
-
     if (tooSmall) {
       if (key.name === "q") {
         key.preventDefault()
@@ -858,6 +1029,11 @@ export function App({ startPath }: Props) {
 
     if (busyRef.current) return
 
+    if (key.name === "b") {
+      key.preventDefault()
+      openPicker()
+      return
+    }
     if (key.name === "q") {
       key.preventDefault()
       renderer.destroy()
@@ -989,6 +1165,21 @@ export function App({ startPath }: Props) {
     }
   })
 
+  if (screen === "picker") {
+    return (
+      <RepoPicker
+        entries={pickerRepos}
+        roots={pickerRoots}
+        cursor={pickerCursor}
+        loading={pickerLoading}
+        error={pickerError}
+        canGoBack={!!launchPath || !!root}
+        currentRepoPath={root}
+        width={width}
+      />
+    )
+  }
+
   if (phase === "boot") {
     return (
       <box width="100%" height="100%" backgroundColor={theme.bg} alignItems="center" justifyContent="center">
@@ -1005,8 +1196,8 @@ export function App({ startPath }: Props) {
         >
           <text fg={theme.accent}>Opening repository…</text>
           <box height={1} />
-          <text fg={theme.muted}>{truncateRight(startPath, Math.max(20, width - 14))}</text>
-          <text fg={theme.dim}>q quit</text>
+          <text fg={theme.muted}>{truncateRight(launchPath ?? "", Math.max(20, width - 14))}</text>
+          <text fg={theme.dim}>b repositories · q quit</text>
         </box>
       </box>
     )
@@ -1035,7 +1226,7 @@ export function App({ startPath }: Props) {
             </box>
           </scrollbox>
           <box height={1} flexShrink={0}>
-            <text fg={theme.muted}>q / esc quit</text>
+            <text fg={theme.muted}>b repositories · q / esc quit</text>
           </box>
         </box>
       </box>
@@ -1076,7 +1267,7 @@ export function App({ startPath }: Props) {
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg}>
       <Header
-        root={root ?? startPath}
+        root={root ?? launchPath ?? ""}
         status={status}
         width={width}
         busy={activity}
