@@ -4,7 +4,7 @@ A small, keyboard-driven git client built with [OpenTUI](https://opentui.com) an
 
 It is intentionally narrow: one repository at a time, local branches, file-level staging, commits, fetch/pull/push, and a branch history preview. Nothing destructive.
 
-By default it opens a repository picker that scans `~/DEV` and `~/FIT` for git working trees. You can also launch straight into a repository.
+By default it opens a repository picker that scans `~/DEV` and `~/FIT` for git working trees. Each entry shows the checked-out branch and a yellow `●` when that branch has uncommitted changes. You can also launch straight into a repository.
 
 ## Requirements
 

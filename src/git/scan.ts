@@ -2,8 +2,11 @@ import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, join, relative, resolve } from "node:path"
 import type { RepoEntry } from "../types"
+import { runGit } from "./exec"
 
 const MAX_DEPTH = 8
+const DIRTY_CONCURRENCY = 8
+const DIRTY_TIMEOUT_MS = 5000
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -105,6 +108,32 @@ async function walk(
   }
 }
 
+/**
+ * Check whether the checked-out branch has uncommitted changes. Returns
+ * undefined when git cannot report a status (for example a broken repo).
+ */
+export async function readDirty(repoPath: string): Promise<boolean | undefined> {
+  const result = await runGit(["status", "--porcelain", "--untracked-files=normal"], repoPath, {
+    timeoutMs: DIRTY_TIMEOUT_MS,
+  })
+  if (result.code !== 0 || result.timedOut) return undefined
+  return result.stdout.trim().length > 0
+}
+
+async function annotateDirty(entries: RepoEntry[]): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < entries.length) {
+      const entry = entries[next++]!
+      const dirty = await readDirty(entry.path)
+      if (dirty !== undefined) entry.dirty = dirty
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(DIRTY_CONCURRENCY, entries.length) }, worker)
+  await Promise.all(workers)
+}
+
 export async function scanRepos(roots: string[]): Promise<RepoEntry[]> {
   const seen = new Set<string>()
   const results: RepoEntry[] = []
@@ -116,6 +145,8 @@ export async function scanRepos(roots: string[]): Promise<RepoEntry[]> {
     found.sort((a, b) => a.relativePath.localeCompare(b.relativePath, undefined, { sensitivity: "base" }))
     results.push(...found)
   }
+
+  await annotateDirty(results)
 
   return results
 }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
+import { runGitOrThrow } from "../src/git/exec"
 import { scanRepos } from "../src/git/scan"
 
 const dirs: string[] = []
@@ -15,6 +16,13 @@ function tempRoot(prefix: string): string {
 function makeRepo(path: string, branch: string) {
   mkdirSync(join(path, ".git"), { recursive: true })
   writeFileSync(join(path, ".git", "HEAD"), `ref: refs/heads/${branch}\n`)
+}
+
+async function makeRealRepo(path: string, branch = "main") {
+  mkdirSync(path, { recursive: true })
+  await runGitOrThrow(["init", "-b", branch], path)
+  await runGitOrThrow(["config", "user.name", "Test User"], path)
+  await runGitOrThrow(["config", "user.email", "test@example.com"], path)
 }
 
 afterEach(() => {
@@ -53,6 +61,25 @@ describe("scanRepos", () => {
       basename(rootA),
       basename(rootB),
     ])
+  })
+
+  test("reports whether the checked-out branch has uncommitted changes", async () => {
+    const root = tempRoot("gitui-scan-dirty")
+    const clean = join(root, "clean")
+    const dirty = join(root, "dirty")
+
+    await makeRealRepo(clean)
+    writeFileSync(join(clean, "committed.txt"), "committed\n")
+    await runGitOrThrow(["add", "-A"], clean)
+    await runGitOrThrow(["commit", "-m", "initial"], clean)
+
+    await makeRealRepo(dirty)
+    writeFileSync(join(dirty, "untracked.txt"), "untracked\n")
+
+    const repos = await scanRepos([root])
+    const byPath = new Map(repos.map((repo) => [repo.path, repo]))
+    expect(byPath.get(clean)?.dirty).toBe(false)
+    expect(byPath.get(dirty)?.dirty).toBe(true)
   })
 
   test("returns an empty list for missing roots", async () => {

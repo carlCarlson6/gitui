@@ -28,7 +28,7 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
   const scrollRef = useRef<ScrollBoxRenderable>(null)
   const contentWidth = Math.max(20, width - 6)
   const branchWidth = Math.min(28, Math.max(10, Math.floor(contentWidth * 0.32)))
-  const pathWidth = Math.max(10, contentWidth - branchWidth - 4)
+  const pathWidth = Math.max(10, contentWidth - branchWidth - 6)
 
   const groups = useMemo(
     () =>
@@ -124,7 +124,7 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
                   const active = index === cursor
                   const current = entry.path === currentRepoPath
                   const pathText = truncateRight(entry.relativePath, pathWidth).padEnd(pathWidth)
-                  const branchText = truncateRight(entry.branch ?? "", branchWidth)
+                  const branchText = truncateRight(entry.branch ?? "", branchWidth).padEnd(branchWidth)
                   return (
                     <box
                       id={`repo-row-${index}`}
@@ -139,6 +139,7 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
                         <span fg={current ? theme.green : theme.dim}>{current ? "*" : " "}</span>
                         <span> {pathText}</span>
                         <span fg={active ? theme.selectedFg : theme.cyan}>{branchText}</span>
+                        <span fg={entry.dirty ? theme.yellow : theme.dim}> {entry.dirty ? "●" : " "}</span>
                       </text>
                     </box>
                   )
@@ -152,7 +153,11 @@ export function RepoPicker({ entries, roots, cursor, loading, error, canGoBack, 
       <box flexDirection="column" height={2} flexShrink={0} paddingLeft={1} paddingRight={1}>
         <text fg={theme.muted} wrapMode="none">
           {truncateRight(
-            selected ? `${prettyPath(selected.path)}${selected.branch ? ` · ${selected.branch}` : ""}` : rootsLabel,
+            selected
+              ? `${prettyPath(selected.path)}${selected.branch ? ` · ${selected.branch}` : ""}${
+                  selected.dirty ? " · uncommitted changes" : ""
+                }`
+              : rootsLabel,
             Math.max(10, width - 2),
           )}
         </text>

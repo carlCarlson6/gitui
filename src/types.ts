@@ -100,4 +100,6 @@ export type RepoEntry = {
   rootLabel: string
   relativePath: string
   branch?: string
+  /** True when the checked-out branch has staged, unstaged or untracked changes. */
+  dirty?: boolean
 }
