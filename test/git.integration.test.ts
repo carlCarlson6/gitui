@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   commitChanges,
+  discardUnstagedChanges,
   stageAll,
   stagePaths,
   unstagePaths,
@@ -60,6 +61,75 @@ describe("git integration", () => {
     rows = buildFileRows(status)
     expect(rows.some((row) => row.path === "tracked.txt" && row.section === "unstaged")).toBe(true)
     expect(rows.some((row) => row.path === "untracked.txt" && row.section === "unstaged")).toBe(true)
+  })
+
+  test("discards unstaged changes but keeps staged changes", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "tracked.txt"), "one\n")
+    await commitAll(root, "initial")
+
+    writeFileSync(join(root, "tracked.txt"), "one\ntwo\n")
+    await stagePaths(root, ["tracked.txt"])
+    writeFileSync(join(root, "tracked.txt"), "one\ntwo\nthree\n")
+
+    await discardUnstagedChanges(root, [{ path: "tracked.txt", untracked: false }])
+
+    expect(readFileSync(join(root, "tracked.txt"), "utf8")).toBe("one\ntwo\n")
+    expect((await runGitOrThrow(["diff", "--cached", "--", "tracked.txt"], root)).stdout).toContain("+two")
+    expect((await runGitOrThrow(["diff", "--", "tracked.txt"], root)).stdout).toBe("")
+  })
+
+  test("discards untracked and deleted files", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "keep.txt"), "keep\n")
+    writeFileSync(join(root, "gone.txt"), "gone\n")
+    await commitAll(root, "initial")
+
+    writeFileSync(join(root, "keep.txt"), "changed\n")
+    rmSync(join(root, "gone.txt"))
+    writeFileSync(join(root, "untracked.txt"), "new\n")
+    mkdirSync(join(root, "nested"))
+    writeFileSync(join(root, "nested", "file.txt"), "new\n")
+
+    await discardUnstagedChanges(root, [
+      { path: "keep.txt", untracked: false },
+      { path: "gone.txt", untracked: false },
+      { path: "untracked.txt", untracked: true },
+      { path: "nested/file.txt", untracked: true },
+    ])
+
+    expect(readFileSync(join(root, "keep.txt"), "utf8")).toBe("keep\n")
+    expect(readFileSync(join(root, "gone.txt"), "utf8")).toBe("gone\n")
+    expect(existsSync(join(root, "untracked.txt"))).toBe(false)
+    expect(existsSync(join(root, "nested", "file.txt"))).toBe(false)
+    expect(buildFileRows(await readStatus(root))).toHaveLength(0)
+  })
+
+  test("treats discard paths literally", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "base.txt"), "base\n")
+    await commitAll(root, "initial")
+    writeFileSync(join(root, "file[1].txt"), "bracket\n")
+    writeFileSync(join(root, "file1.txt"), "plain\n")
+
+    await discardUnstagedChanges(root, [{ path: "file[1].txt", untracked: true }])
+
+    expect(existsSync(join(root, "file[1].txt"))).toBe(false)
+    expect(readFileSync(join(root, "file1.txt"), "utf8")).toBe("plain\n")
+  })
+
+  test("discards an unstaged change on an unborn branch", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "first.txt"), "first\n")
+    await stagePaths(root, ["first.txt"])
+    writeFileSync(join(root, "first.txt"), "first\nsecond\n")
+
+    await discardUnstagedChanges(root, [{ path: "first.txt", untracked: false }])
+
+    expect(readFileSync(join(root, "first.txt"), "utf8")).toBe("first\n")
+    const rows = buildFileRows(await readStatus(root))
+    expect(groupRows(rows).staged).toHaveLength(1)
+    expect(groupRows(rows).unstaged).toHaveLength(0)
   })
 
   test("reads history of a non-checked-out branch", async () => {
