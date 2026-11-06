@@ -13,9 +13,10 @@ import {
 } from "../src/git/actions"
 import { readFilePreview } from "../src/git/diff"
 import { runGit, runGitOrThrow } from "../src/git/exec"
-import { readCommit, readLog } from "../src/git/history"
+import { readBranchGraph, readCommit, readLog } from "../src/git/history"
 import { readBranches, readOperation, readStatus } from "../src/git/repo"
 import { buildFileRows, groupRows, hasConflicts } from "../src/git/status"
+import { readCommitTree } from "../src/git/tree"
 
 const repos: string[] = []
 
@@ -141,6 +142,8 @@ describe("git integration", () => {
 
     await runGitOrThrow(["switch", "-c", "feature"], root)
     writeFileSync(join(root, "feature.txt"), "feature\n")
+    writeFileSync(join(root, "second.txt"), "second\n")
+    writeFileSync(join(root, "name with space.txt"), "space\n")
     await commitAll(root, "feature work")
     const featureHash = (await runGitOrThrow(["rev-parse", "HEAD"], root)).stdout.trim()
 
@@ -161,7 +164,68 @@ describe("git integration", () => {
     const detail = await readCommit(root, featureHash)
     expect(detail.subject).toBe("feature work")
     expect(detail.patch).toContain("feature.txt")
+    expect(detail.patch).toContain("second.txt")
+    expect(detail.stat).toContain("3 files changed")
     expect(detail.merge).toBe(false)
+
+    const files = new Map(detail.files.map((file) => [file.path, file.patch]))
+    expect(files.size).toBe(3)
+    expect(files.get("feature.txt")).toContain("+feature")
+    expect(files.get("second.txt")).toContain("+second")
+    expect(files.get("name with space.txt")).toContain("+space")
+  })
+
+  test("reads a graph of all branches", async () => {
+    const root = await makeRepo()
+    writeFileSync(join(root, "base.txt"), "base\n")
+    await commitAll(root, "initial")
+
+    await runGitOrThrow(["switch", "-c", "feature"], root)
+    writeFileSync(join(root, "feature.txt"), "feature\n")
+    await commitAll(root, "feature work")
+
+    await runGitOrThrow(["switch", "main"], root)
+    writeFileSync(join(root, "main.txt"), "main\n")
+    await commitAll(root, "main work")
+
+    const graph = await readBranchGraph(root)
+    const commits = graph.rows.flatMap((row) => (row.commit ? [row.commit] : []))
+    expect(commits.map((commit) => commit.subject)).toContain("feature work")
+    expect(commits.map((commit) => commit.subject)).toContain("main work")
+    expect(commits.some((commit) => commit.decorations.includes("feature"))).toBe(true)
+    expect(commits.every((commit) => /^[0-9a-f]+$/.test(commit.shortHash))).toBe(true)
+    expect(graph.rows.some((row) => row.graph.includes("*"))).toBe(true)
+    expect(graph.truncated).toBe(false)
+
+    const limited = await readBranchGraph(root, 1)
+    expect(limited.rows.filter((row) => row.commit)).toHaveLength(1)
+    expect(limited.truncated).toBe(true)
+  })
+
+  test("reads the file tree of a commit", async () => {
+    const root = await makeRepo()
+    mkdirSync(join(root, "src", "components"), { recursive: true })
+    writeFileSync(join(root, "README.md"), "# demo\n")
+    writeFileSync(join(root, "src", "index.ts"), "export {}\n")
+    writeFileSync(join(root, "src", "components", "App.tsx"), "export {}\n")
+    await commitAll(root, "tree")
+
+    const hash = (await runGitOrThrow(["rev-parse", "HEAD"], root)).stdout.trim()
+    const tree = await readCommitTree(root, hash)
+    const byPath = new Map(tree.rows.map((row) => [row.path, row]))
+
+    expect(tree.total).toBe(3)
+    expect(tree.truncated).toBe(false)
+    expect(byPath.get("README.md")?.kind).toBe("file")
+    expect(byPath.get("src")?.kind).toBe("dir")
+    expect(byPath.get("src/components")?.kind).toBe("dir")
+    expect(byPath.get("src/components/App.tsx")?.kind).toBe("file")
+
+    const rootPaths = tree.rows.filter((row) => row.depth === 0).map((row) => row.path)
+    expect(rootPaths).toEqual(["src", "README.md"])
+    expect(byPath.get("src")?.prefix).toBe("├─ ")
+    expect(byPath.get("README.md")?.prefix).toBe("└─ ")
+    expect(byPath.get("src/components/App.tsx")?.prefix).toBe("│  │  └─ ")
   })
 
   test("deletes a local branch and its upstream remote branch", async () => {
@@ -223,6 +287,7 @@ describe("git integration", () => {
     expect(status.unborn).toBe(true)
     expect(status.head).toBe("main")
     expect(await readLog(root, "main")).toEqual([])
+    expect((await readBranchGraph(root)).rows).toEqual([])
 
     await stagePaths(root, ["first.txt"])
     status = await readStatus(root)

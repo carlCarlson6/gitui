@@ -7,7 +7,7 @@ import { CommitModal } from "./components/CommitModal"
 import { CommitsPanel } from "./components/CommitsPanel"
 import { Footer } from "./components/Footer"
 import { Header } from "./components/Header"
-import { MainPane } from "./components/MainPane"
+import { MainPane, type MainContent } from "./components/MainPane"
 import { ModalFrame, TextModal } from "./components/Modal"
 import { RepoPicker } from "./components/RepoPicker"
 import {
@@ -26,7 +26,7 @@ import {
 } from "./git/actions"
 import { readFilePreview } from "./git/diff"
 import { GitError, UserError, errorTitle, errorToText } from "./git/exec"
-import { readCommit, readLog } from "./git/history"
+import { readBranchGraph, readCommit, readLog } from "./git/history"
 import {
   discoverRepo,
   readBranches,
@@ -42,10 +42,12 @@ import { firstLine, truncateRight } from "./lib/format"
 import { theme } from "./theme"
 import type {
   Branch,
+  BranchGraphData,
   Commit,
   CommitDetail,
   ErrorInfo,
   FileRow,
+  MainView,
   Panel,
   Preview,
   PreviewData,
@@ -73,18 +75,18 @@ const PANEL_ORDER: Panel[] = ["branches", "changes", "commits", "main"]
 const HELP_TEXT = `gitui — keyboard shortcuts
 
 Panels
-  Tab / Shift+Tab     cycle Branches → Changes → Commits → Preview
+  Tab / Shift+Tab     cycle Branches → Changes → Commits → right pane
   l                   jump to Commits
   j/k or ↑/↓          move selection / scroll
   g / G               top / bottom
-  Enter               checkout branch / focus preview
+  Enter               checkout branch / focus right pane
   b                   switch repository
   q                   quit
   ?                   show this help
   Esc                 close modal / toggle repositories
 
 Branches
-  j/k or ↑/↓          preview a branch
+  j/k or ↑/↓          select a branch
   Enter               checkout the highlighted branch
   d                   delete the local branch
   D                   delete the local branch and its upstream remote
@@ -105,11 +107,16 @@ Git
   P                   push (sets upstream on first push)
   r                   refresh status, branches and history
 
-Scroll the preview
+Scroll the right pane
   j/k, PgUp/PgDn, g/G
 
+Right pane
+  • Branches selected: graph of all local and remote branches.
+  • Changes selected: diff for the selected file.
+  • Commits selected: metadata, stat and full diff of the selected commit.
+
 Notes
-  • Commit history follows the branch highlighted in Branches. Enter checks it out.
+  • Commit history follows the branch selected in Branches. Enter checks it out.
   • Commits always apply to the checked-out branch; previewing another branch blocks commits until you check it out.
   • Pull honors your git config. Conflicts are detected, not resolved in-app.
   • Resolve conflicted files in your editor, then stage them here one by one.
@@ -219,12 +226,19 @@ export function App({ startPath }: Props) {
   const [commitsError, setCommitsError] = useState<string | null>(null)
   const [dataVersion, setDataVersion] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
-  const [focus, setFocus] = useState<Panel>("changes")
+  const [focus, setFocus] = useState<Panel>("branches")
+  const [mainView, setMainView] = useState<MainView>("branches")
   const [fileCursor, setFileCursor] = useState(0)
   const [commitCursor, setCommitCursor] = useState(0)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [graph, setGraph] = useState<BranchGraphData | null>(null)
+  const [graphLoading, setGraphLoading] = useState(false)
+  const [graphError, setGraphError] = useState<string | null>(null)
+  const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null)
+  const [commitDetailLoading, setCommitDetailLoading] = useState(false)
+  const [commitDetailError, setCommitDetailError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState("")
   const [modal, setModal] = useState<ModalState>({ type: "none" })
@@ -235,6 +249,8 @@ export function App({ startPath }: Props) {
   const refreshSeq = useRef(0)
   const commitsSeq = useRef(0)
   const previewSeq = useRef(0)
+  const graphSeq = useRef(0)
+  const commitDetailSeq = useRef(0)
   const busyRef = useRef(false)
   const didInitRef = useRef(false)
   const commitHashRef = useRef<string | null>(null)
@@ -244,7 +260,7 @@ export function App({ startPath }: Props) {
   const pendingFileKeyRef = useRef<string | null>(null)
   const pickerSelectedPathRef = useRef<string | null>(null)
   const pickerScanSeq = useRef(0)
-  const commitCacheRef = useRef(new Map<string, CommitDetail>())
+  const commitDetailCacheRef = useRef(new Map<string, CommitDetail>())
   const mainScrollRef = useRef<ScrollBoxRenderable>(null)
   const modalScrollRef = useRef<ScrollBoxRenderable>(null)
 
@@ -252,6 +268,7 @@ export function App({ startPath }: Props) {
   const groupedRows = useMemo(() => groupRows(fileRows), [fileRows])
   const stagedCount = groupedRows.staged.length
   const currentBranch = status?.head ?? null
+  const selectedCommit = commits[commitCursor] ?? null
 
   const historyLabel = useMemo(() => {
     if (historyBranch) {
@@ -375,10 +392,9 @@ export function App({ startPath }: Props) {
         if (cancelled || !data) return
         if (!didInitRef.current) {
           didInitRef.current = true
-          const rows = buildFileRows(data.status)
           setFileCursor(0)
           setCommitCursor(0)
-          setFocus(rows.length > 0 ? "changes" : "commits")
+          setFocus("branches")
         }
         setPhase("ready")
       } catch (error) {
@@ -519,52 +535,41 @@ export function App({ startPath }: Props) {
     if (row) selectedFileKeyRef.current = row.key
   }, [fileCursor, fileRows])
 
-  // The focused list drives the preview. Branches and the preview pane leave it alone.
+  // The focused section owns the right pane; focusing the pane keeps the last view.
   useEffect(() => {
-    if (focus === "changes") {
-      const row = fileRows[fileCursor]
-      const next: Preview | null = row
-        ? {
-            kind: "file",
-            key: row.key,
-            path: row.path,
-            origPath: row.origPath,
-            section: row.section,
-            untracked: row.untracked,
-          }
-        : null
-      setPreview((current) => (samePreview(current, next) ? current : next))
-    } else if (focus === "commits" || focus === "branches") {
-      const commit = commits[commitCursor]
-      const next: Preview | null = commit
-        ? { kind: "commit", hash: commit.hash, shortHash: commit.shortHash }
-        : null
-      setPreview((current) => (samePreview(current, next) ? current : next))
-    }
-  }, [focus, fileCursor, fileRows, commitCursor, commits])
+    if (focus !== "main") setMainView(focus)
+  }, [focus])
+
+  // Changes drives the file diff shown on the right.
+  useEffect(() => {
+    if (mainView !== "changes") return
+    const row = fileRows[fileCursor]
+    const next: Preview | null = row
+      ? {
+          kind: "file",
+          key: row.key,
+          path: row.path,
+          origPath: row.origPath,
+          section: row.section,
+          untracked: row.untracked,
+        }
+      : null
+    setPreview((current) => (samePreview(current, next) ? current : next))
+  }, [mainView, fileCursor, fileRows])
 
   useEffect(() => {
     mainScrollRef.current?.scrollTo({ x: 0, y: 0 })
-  }, [preview])
+  }, [mainView, preview, selectedCommit?.hash])
 
-  // Fetch the preview body with a request id so rapid j/k cannot render stale data.
+  // Fetch the selected file diff with a request id so rapid j/k cannot render stale data.
   useEffect(() => {
     const seq = ++previewSeq.current
     let active = true
 
-    if (!root || !preview) {
+    if (!root || !preview || preview.kind !== "file" || mainView !== "changes") {
       setPreviewData(null)
       setPreviewLoading(false)
       return
-    }
-
-    if (preview.kind === "commit") {
-      const cached = commitCacheRef.current.get(preview.hash)
-      if (cached) {
-        setPreviewData({ kind: "commit", data: cached })
-        setPreviewLoading(false)
-        return
-      }
     }
 
     setPreviewData(null)
@@ -573,22 +578,9 @@ export function App({ startPath }: Props) {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          let next: PreviewData
-          if (preview.kind === "commit") {
-            const detail = await readCommit(root, preview.hash)
-            const cache = commitCacheRef.current
-            if (cache.size >= 20) {
-              const first = cache.keys().next().value
-              if (first) cache.delete(first)
-            }
-            cache.set(preview.hash, detail)
-            next = { kind: "commit", data: detail }
-          } else {
-            const file = await readFilePreview(root, preview)
-            next = { kind: "file", data: file }
-          }
+          const file = await readFilePreview(root, preview)
           if (active && seq === previewSeq.current) {
-            setPreviewData(next)
+            setPreviewData({ kind: "file", data: file })
             setPreviewLoading(false)
           }
         } catch (error) {
@@ -604,7 +596,84 @@ export function App({ startPath }: Props) {
       active = false
       clearTimeout(timer)
     }
-  }, [root, preview, dataVersion])
+  }, [root, preview, dataVersion, mainView])
+
+  // Branches shows a graph of every local and remote branch on the right.
+  useEffect(() => {
+    if (!root || phase !== "ready" || mainView !== "branches") return
+    const seq = ++graphSeq.current
+    setGraphLoading(true)
+    setGraphError(null)
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const data = await readBranchGraph(root)
+          if (seq === graphSeq.current) setGraph(data)
+        } catch (error) {
+          if (seq === graphSeq.current) {
+            setGraph(null)
+            setGraphError(errorToText(error))
+          }
+        } finally {
+          if (seq === graphSeq.current) setGraphLoading(false)
+        }
+      })()
+    }, 40)
+
+    return () => clearTimeout(timer)
+  }, [root, phase, mainView, dataVersion])
+
+  // Commits shows the selected commit's metadata and full diff on the right.
+  useEffect(() => {
+    const seq = ++commitDetailSeq.current
+    if (!root || phase !== "ready" || mainView !== "commits") return
+
+    if (!selectedCommit) {
+      setCommitDetail(null)
+      setCommitDetailError(null)
+      setCommitDetailLoading(commitsLoading)
+      return
+    }
+
+    const cached = commitDetailCacheRef.current.get(selectedCommit.hash)
+    if (cached) {
+      setCommitDetail(cached)
+      setCommitDetailError(null)
+      setCommitDetailLoading(false)
+      return
+    }
+
+    setCommitDetail(null)
+    setCommitDetailError(null)
+    setCommitDetailLoading(true)
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const data = await readCommit(root, selectedCommit.hash)
+          const cache = commitDetailCacheRef.current
+          if (cache.size >= 20) {
+            const first = cache.keys().next().value
+            if (first) cache.delete(first)
+          }
+          cache.set(selectedCommit.hash, data)
+          if (seq === commitDetailSeq.current) {
+            setCommitDetail(data)
+            setCommitDetailLoading(false)
+          }
+        } catch (error) {
+          if (seq === commitDetailSeq.current) {
+            setCommitDetail(null)
+            setCommitDetailError(errorToText(error))
+            setCommitDetailLoading(false)
+          }
+        }
+      })()
+    }, 30)
+
+    return () => clearTimeout(timer)
+  }, [root, phase, mainView, selectedCommit?.hash, commitsLoading])
 
   const perform = useCallback(
     async (label: string, action: () => Promise<void>) => {
@@ -707,6 +776,8 @@ export function App({ startPath }: Props) {
     refreshSeq.current++
     commitsSeq.current++
     previewSeq.current++
+    graphSeq.current++
+    commitDetailSeq.current++
     busyRef.current = false
     didInitRef.current = false
     historyBranchRef.current = null
@@ -716,7 +787,7 @@ export function App({ startPath }: Props) {
     resetCommitRef.current = false
     selectedFileKeyRef.current = null
     pendingFileKeyRef.current = null
-    commitCacheRef.current.clear()
+    commitDetailCacheRef.current.clear()
 
     setRoot(null)
     setStatus(null)
@@ -728,12 +799,19 @@ export function App({ startPath }: Props) {
     setCommitsError(null)
     setDataVersion(0)
     setRefreshing(false)
-    setFocus("changes")
+    setFocus("branches")
+    setMainView("branches")
     setFileCursor(0)
     setCommitCursor(0)
     setPreview(null)
     setPreviewData(null)
     setPreviewLoading(false)
+    setGraph(null)
+    setGraphLoading(false)
+    setGraphError(null)
+    setCommitDetail(null)
+    setCommitDetailLoading(false)
+    setCommitDetailError(null)
     setBusy(null)
     setMessage("")
     setModal({ type: "none" })
@@ -1473,11 +1551,31 @@ export function App({ startPath }: Props) {
     )
   }
 
-  const previewTitle = !preview
-    ? "Preview"
+  const diffTitle = !preview
+    ? "Diff"
     : preview.kind === "commit"
       ? `Commit · ${preview.shortHash}`
       : `Diff · ${preview.section === "staged" ? "staged" : preview.section === "conflicted" ? "conflict" : "unstaged"} · ${preview.path}`
+  const mainTitle =
+    mainView === "branches"
+      ? "Graph · all branches"
+      : mainView === "commits"
+        ? selectedCommit
+          ? `Commit · ${selectedCommit.shortHash}`
+          : "Commit"
+        : diffTitle
+  const mainContent: MainContent =
+    mainView === "branches"
+      ? { kind: "graph", data: graph, loading: graphLoading, error: graphError }
+      : mainView === "commits"
+        ? {
+            kind: "commit",
+            commit: selectedCommit,
+            data: commitDetail && commitDetail.hash === selectedCommit?.hash ? commitDetail : null,
+            loading: commitDetailLoading || commitsLoading,
+            error: commitDetailError ?? commitsError,
+          }
+        : { kind: "diff", preview, data: previewData, loading: previewLoading }
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg}>
@@ -1518,10 +1616,9 @@ export function App({ startPath }: Props) {
         </box>
 
         <MainPane
-          title={previewTitle}
-          preview={preview}
-          data={previewData}
-          loading={previewLoading}
+          title={mainTitle}
+          width={width - leftWidth}
+          content={mainContent}
           focused={focus === "main"}
           scrollRef={mainScrollRef}
         />

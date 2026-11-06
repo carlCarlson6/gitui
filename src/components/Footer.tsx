@@ -4,11 +4,11 @@ import { truncateRight } from "../lib/format"
 
 const HINTS: Record<Panel, string> = {
   branches:
-    "j/k move · enter checkout · d delete · D delete+remote · tab next · c commit · f fetch · p pull · P push · esc repos · ? help · q quit",
+    "j/k select · enter checkout · d delete · D delete+remote · right: branch graph · tab next · c commit · esc repos · ? help · q quit",
   changes:
-    "space stage/unstage · u stage file · A stage all · U unstage all · d/D undo · enter diff · tab next · c commit · esc repos · ? help · q quit",
+    "space stage/unstage · u stage file · A stage all · U unstage all · d/D undo · right: file diff · tab next · c commit · esc repos · ? help",
   commits:
-    "j/k preview commit · g/G top/bottom · enter scroll diff · tab next · c commit · esc repos · ? help · q quit",
+    "j/k select commit · g/G top/bottom · enter scroll diff · right: commit diff · tab next · esc repos · ? help · q quit",
   main: "j/k scroll · PgUp/PgDn · g/G top/bottom · tab next · esc repos · ? help · q quit",
 }
 

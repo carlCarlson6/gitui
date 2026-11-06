@@ -1,5 +1,8 @@
 export type Panel = "branches" | "changes" | "commits" | "main"
 
+/** The panel that owns the right-hand content. "main" keeps the previous view. */
+export type MainView = "branches" | "changes" | "commits"
+
 export type Branch = {
   name: string
   current: boolean
@@ -47,6 +50,46 @@ export type Commit = {
   subject: string
 }
 
+export type GraphCommit = {
+  shortHash: string
+  /** Decorations such as `HEAD -> main, origin/main`; empty when undecorated. */
+  decorations: string
+  subject: string
+  date: string
+}
+
+export type GraphRow = {
+  /** Branch-lane glyphs and spacing before the commit text. */
+  graph: string
+  /** Commit shown by this row; null for connector-only rows. */
+  commit: GraphCommit | null
+}
+
+export type BranchGraphData = {
+  rows: GraphRow[]
+  truncated: boolean
+}
+
+export type TreeRow = {
+  depth: number
+  name: string
+  path: string
+  kind: "dir" | "file"
+  /** Glyphs used to draw the tree connectors at this depth. */
+  prefix: string
+}
+
+export type CommitTreeData = {
+  rows: TreeRow[]
+  total: number
+  truncated: boolean
+}
+
+export type CommitFileDiff = {
+  path: string
+  patch: string
+}
+
 export type CommitDetail = {
   hash: string
   shortHash: string
@@ -59,6 +102,8 @@ export type CommitDetail = {
   merge: boolean
   stat: string
   patch: string
+  /** Each file's patch, split apart because the diff renderable handles one file at a time. */
+  files: CommitFileDiff[]
   truncated: boolean
 }
 

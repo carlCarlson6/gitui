@@ -2,7 +2,7 @@
 
 A small, keyboard-driven git client built with [OpenTUI](https://opentui.com) and React.
 
-It is intentionally narrow: one repository at a time, local branches, file-level staging, commits, fetch/pull/push, a branch history preview, and a confirmed undo for unstaged changes.
+It is intentionally narrow: one repository at a time, local branches, file-level staging, commits, fetch/pull/push, branch history and commit diff previews, and a confirmed undo for unstaged changes.
 
 By default it opens a repository picker that scans `~/DEV` and `~/FIT` for git working trees. Each entry shows the checked-out branch and a yellow `●` when that branch has uncommitted changes. You can also launch straight into a repository.
 
@@ -33,9 +33,9 @@ In direct mode, the path must be inside a git working tree.
 
 ## What it does
 
-- **Branches** — local branches, current branch marked with `*`. Highlighting a branch previews its last 100 commits without checking it out. `Enter` checks it out. `d` deletes the local branch; `D` deletes it together with its upstream remote branch after a confirmation prompt.
-- **Changes** — staged, unstaged, untracked and conflicted files. File-level stage/unstage, stage all, unstage all, and undo the selected unstaged change or all unstaged changes. Undo restores tracked files from the index (staged changes are kept) and deletes selected untracked files after a confirmation prompt.
-- **Preview** — diff for the selected file, or a commit's metadata, stat and patch. Commit history follows the highlighted branch.
+- **Branches** — local branches, current branch marked with `*`. Branches is selected when a repository opens. Selecting a branch previews its last 100 commits without checking it out. While Branches is focused, the right pane shows a graph of all local and remote branches. `Enter` checks the selected branch out. `d` deletes the local branch; `D` deletes it together with its upstream remote branch after a confirmation prompt.
+- **Changes** — staged, unstaged, untracked and conflicted files. File-level stage/unstage, stage all, unstage all, and undo the selected unstaged change or all unstaged changes. Undo restores tracked files from the index (staged changes are kept) and deletes selected untracked files after a confirmation prompt. While Changes is focused, the right pane shows the selected file's diff.
+- **Commits** — the selected branch's last 100 commits. While Commits is focused, the right pane shows the selected commit's metadata, stat and full diff across every changed file.
 - **Commit** — multi-line message modal, `Ctrl+S` to commit. `Ctrl+A` amends the last commit and prefills its message. Commits always apply to the checked-out branch; previewing a different branch blocks committing until you check it out.
 - **Fetch / pull / push** — `fetch --all --prune`, `pull` with your git config, and `push` with automatic upstream setup.
 - **Conflicts** — detected and surfaced. The app blocks commit, checkout, pull and push while the index has unmerged entries. Resolve files in your editor and stage them individually here to mark them resolved.
@@ -45,11 +45,11 @@ In direct mode, the path must be inside a git working tree.
 
 | Key | Action |
 | --- | --- |
-| `Tab` / `Shift+Tab` | cycle Branches → Changes → Commits → Preview |
+| `Tab` / `Shift+Tab` | cycle Branches → Changes → Commits → right pane |
 | `l` | jump to Commits |
 | `j` / `k`, arrows | move selection / scroll |
 | `g` / `G` | top / bottom |
-| `Enter` | checkout branch / focus preview |
+| `Enter` | checkout branch / focus right pane |
 | `space` | stage or unstage selected file |
 | `u` | stage the selected unstaged file |
 | `A` | stage all changes |
